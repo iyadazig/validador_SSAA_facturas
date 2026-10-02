@@ -84,11 +84,19 @@ st.title("Revisión de servicios de ajuste (SSAA) en facturas")
 # valores iniciales de los campos (los widgets no llevan value= para no chocar
 # con los que se rellenan al leer el PDF o al cargar una ficha)
 for k, v in {"f_comercializadora": "", "f_numero": "", "f_emision": None, "f_cups": "",
-             "f_tarifa": "6.1TD", "f_inicio": None, "f_fin": None, "f_consumo": None,
-             "f_importe": None}.items():
+             "f_tarifa": "6.1TD", "f_inicio": None, "f_fin": None, "f_consumo": None}.items():
     ss.setdefault(k, v)
 if "c_tarifa" not in ss:
     fijar("c_", motor.Contrato().a_dict())
+
+COLS_LINEAS = ["Concepto", "Inicio", "Fin", "kWh", "Precio €/kWh", "Importe €"]
+
+
+def tabla_lineas(lineas):
+    return pd.DataFrame([{"Concepto": l.concepto, "Inicio": l.inicio, "Fin": l.fin,
+                          "kWh": l.kwh, "Precio €/kWh": l.precio, "Importe €": l.importe}
+                         for l in lineas], columns=COLS_LINEAS)
+
 
 # ===================================================================== factura
 st.header("1. Factura")
@@ -105,23 +113,21 @@ if pdf is not None:
         else:
             ss.pdf_huella = huella
             ss.factura_leida = f
+            ss.lineas_iniciales = tabla_lineas(f.lineas_ssaa)
+            ss.pop("resultados", None)
             fijar("f_", {"comercializadora": f.comercializadora, "numero": f.numero,
                          "emision": f.fecha_emision, "cups": f.cups,
                          "tarifa": f.tarifa if f.tarifa in motor.TARIFAS else "6.1TD",
-                         "inicio": f.inicio, "fin": f.fin, "consumo": f.consumo_kwh,
-                         "importe": f.importe_ssaa})
+                         "inicio": f.inicio, "fin": f.fin, "consumo": f.consumo_kwh})
 
 leida = ss.get("factura_leida")
 if leida is not None and pdf is not None:
     st.caption("Lector usado: **%s**. Revisa y corrige los datos antes de calcular." % leida.lector)
     for a in leida.avisos:
         st.warning(a)
-    with st.expander("Líneas de SSAA encontradas en el PDF (%d)" % len(leida.lineas_ssaa)):
+    with st.expander("Texto de las líneas de SSAA en el PDF (%d)" % len(leida.lineas_ssaa)):
         for l in leida.lineas_ssaa:
-            st.write("`%s` → números: %s" % (l.texto, l.numeros))
-    with st.expander("Valores en kWh encontrados"):
-        for v, t in leida.candidatos_kwh[:40]:
-            st.write("%s kWh — `%s`" % (v, t))
+            st.write("`%s`" % l.texto)
     with st.expander("Texto completo del PDF"):
         st.text(leida.texto)
 
@@ -132,14 +138,65 @@ with c1:
     st.date_input("Fecha de emisión", key="f_emision", format="DD/MM/YYYY")
 with c2:
     cups = st.text_input("CUPS", key="f_cups").strip().upper()
-    st.date_input("Inicio del periodo", key="f_inicio", format="DD/MM/YYYY")
-    st.date_input("Fin del periodo (incluido)", key="f_fin", format="DD/MM/YYYY")
+    st.date_input("Inicio del periodo facturado", key="f_inicio", format="DD/MM/YYYY")
+    st.date_input("Fin del periodo facturado (incluido)", key="f_fin", format="DD/MM/YYYY")
 with c3:
     st.selectbox("Tarifa de acceso", motor.TARIFAS, key="f_tarifa")
-    st.number_input("Consumo del periodo (kWh)", min_value=0.0, format="%.3f",
+    st.number_input("Energía activa facturada (kWh)", min_value=0.0, format="%.3f",
                     key="f_consumo")
-    st.number_input("Importe de SSAA facturado (€) — negativo si es abono",
-                    format="%.2f", key="f_importe")
+
+st.subheader("Líneas de SSAA")
+st.caption("Una fila por cada concepto de SSAA de la factura, con **su** periodo (las "
+           "regularizaciones suelen ser de meses anteriores). Importe negativo si es abono. "
+           "Si falta el periodo se usa el de la factura.")
+lineas_df = st.data_editor(
+    ss.get("lineas_iniciales", pd.DataFrame(columns=COLS_LINEAS)),
+    key="editor_lineas_%s" % ss.get("pdf_huella", "manual"), num_rows="dynamic",
+    use_container_width=True, hide_index=True,
+    column_config={
+        "Concepto": st.column_config.TextColumn(width="large"),
+        "Inicio": st.column_config.DateColumn(format="DD/MM/YYYY"),
+        "Fin": st.column_config.DateColumn(format="DD/MM/YYYY"),
+        "kWh": st.column_config.NumberColumn(format="%.3f"),
+        "Precio €/kWh": st.column_config.NumberColumn(format="%.8f"),
+        "Importe €": st.column_config.NumberColumn(format="%.2f")})
+
+
+def _valor(v):
+    if v is None or v is pd.NaT:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return v
+
+
+def lineas_actuales():
+    """Lineas del editor como dicts, con el periodo de la factura si les falta."""
+    out = []
+    for _, fila in lineas_df.iterrows():
+        d = {c: _valor(fila.get(c)) for c in COLS_LINEAS}
+        for c in ("Inicio", "Fin"):
+            if isinstance(d[c], (pd.Timestamp, dt.datetime)):
+                d[c] = d[c].date()
+        for c in ("kWh", "Precio €/kWh", "Importe €"):
+            if d[c] is not None:
+                d[c] = float(d[c])
+        d["Inicio"] = d["Inicio"] or ss.get("f_inicio")
+        d["Fin"] = d["Fin"] or ss.get("f_fin")
+        d["Concepto"] = d["Concepto"] or "Servicios de ajuste"
+        if d["kWh"] is None and d["Importe €"] is None:
+            continue
+        out.append(d)
+    return out
+
+
+lineas = lineas_actuales()
+if lineas:
+    total = sum(l["Importe €"] or 0 for l in lineas)
+    st.caption("Total SSAA facturado en las líneas: **%.2f €**" % total)
 
 # ==================================================================== contrato
 st.header("2. Condiciones de SSAA del contrato")
@@ -236,8 +293,13 @@ if origen == "Subir fichero":
             if len(curva.avisos) > 10:
                 st.warning("… y %d avisos más." % (len(curva.avisos) - 10))
 elif origen == "Gemweb (API)":
-    g_ini, g_fin = ss.get("f_inicio"), ss.get("f_fin")
+    fechas = [l[c] for l in lineas for c in ("Inicio", "Fin") if l[c]] or \
+        [d for d in (ss.get("f_inicio"), ss.get("f_fin")) if d]
+    g_ini, g_fin = (min(fechas), max(fechas)) if fechas else (None, None)
     clave_g = (cups, g_ini, g_fin)
+    if cups and g_ini and g_fin:
+        st.caption("Se descargará del %s al %s (cubre todas las líneas de SSAA)."
+                   % (g_ini.strftime("%d/%m/%Y"), g_fin.strftime("%d/%m/%Y")))
     if not (cups and g_ini and g_fin):
         st.info("Rellena el CUPS y el periodo de la factura para descargar la curva.")
     elif not gemweb.cargar_credenciales()[0]:
@@ -265,72 +327,100 @@ elif origen == "Gemweb (API)":
 
 # =================================================================== resultado
 st.header("4. Resultado")
-ini, fin = ss.get("f_inicio"), ss.get("f_fin")
-if curva is not None and (ini is None or fin is None):
-    st.caption("Sin fechas de factura se usa el periodo de la curva.")
-    ini, fin = ini or curva.inicio, fin or curva.fin
+colores = {"CORRECTO": "green", "FACTURADO DE MÁS": "red", "FACTURADO DE MENOS": "orange"}
+incompletas = [l["Concepto"] for l in lineas if not (l["Inicio"] and l["Fin"])]
+if incompletas:
+    st.info("Faltan fechas en: %s" % ", ".join(str(c) for c in incompletas))
 
-if st.button("Revisar SSAA", type="primary", disabled=ini is None or fin is None):
+if st.button("Revisar SSAA", type="primary", disabled=not lineas or bool(incompletas)):
     contrato = contrato_actual()
-    consumo = ss.get("f_consumo")
-    facturado = ss.get("f_importe")
-    try:
-        with st.spinner("Leyendo ESIOS y calculando…"):
-            r = motor.revisar(contrato, ini, fin, consumo, facturado, curva, tolerancia)
-            diag = motor.diagnostico(contrato, ini, fin, consumo, facturado, curva)
-    except motor.ErrorRevision as e:
-        st.error(str(e))
-    else:
-        ss.resultado = (r, diag)
+    resultados = []
+    with st.spinner("Leyendo ESIOS y calculando…"):
+        for l in lineas:
+            kwh = l["kWh"]
+            if kwh is None and (l["Inicio"], l["Fin"]) == (ss.get("f_inicio"), ss.get("f_fin")):
+                kwh = ss.get("f_consumo")
+            try:
+                r = motor.revisar(contrato, l["Inicio"], l["Fin"], kwh, l["Importe €"],
+                                  curva, tolerancia)
+                diag = motor.diagnostico(contrato, l["Inicio"], l["Fin"], kwh,
+                                         l["Importe €"], curva)
+            except motor.ErrorRevision as e:
+                resultados.append((l, None, str(e)))
+            else:
+                resultados.append((l, r, diag))
+    ss.resultados = resultados
 
-if ss.get("resultado"):
-    r, diag = ss.resultado
-    colores = {"CORRECTO": "green", "FACTURADO DE MÁS": "red", "FACTURADO DE MENOS": "orange"}
-    st.subheader(":%s[%s]" % (colores.get(r.veredicto, "gray"), r.veredicto))
-    m = st.columns(4)
-    m[0].metric("Recalculado", "%.2f €" % r.importe)
-    m[1].metric("Facturado", "%.2f €" % r.facturado if r.facturado is not None else "—")
-    m[2].metric("Diferencia", "%+.2f €" % r.diferencia if r.diferencia is not None else "—",
-                "%+.2f %%" % r.diferencia_pct if r.diferencia_pct is not None else None,
-                delta_color="inverse")
-    m[3].metric("Energía", "%.3f MWh" % r.energia_mwh)
-    m = st.columns(4)
-    m[0].metric("Índice medio aritmético", "%.6f €/MWh" % r.indice_medio)
-    m[1].metric("Índice ponderado", "%.6f €/MWh" % r.indice_ponderado
-                if r.indice_ponderado is not None else "—")
-    m[2].metric("Precio aplicado", "%.6f €/MWh" % r.precio_aplicado)
-    m[3].metric("Pérdidas aplicadas", "%.4f %%" % r.perd_aplicada)
-    for a in r.avisos:
-        st.warning(a)
-    st.caption("Datos ESIOS: " + "; ".join("%s: %s" % kv for kv in r.liquidaciones.items()))
 
-    filas = [{"Momento": dt.datetime.combine(k[0], dt.time()) +
-              dt.timedelta(minutes=(k[1] - 1) * 60 + ((k[2] - 1) * 15 if len(k) == 3 else 0)),
-              "Índice €/MWh": v, "Consumo kWh": e}
-             for k, e, v, _p, _pr, _i in r.detalle]
-    df = pd.DataFrame(filas).set_index("Momento")
-    st.line_chart(df[["Índice €/MWh"]], height=250)
-    if curva is not None:
-        st.bar_chart(df[["Consumo kWh"]], height=200)
+def fila_resumen(l, r):
+    precio_fact = l["Precio €/kWh"] * 1000 if l["Precio €/kWh"] is not None else (
+        l["Importe €"] / r.energia_mwh if r.energia_mwh and l["Importe €"] is not None else None)
+    return {"Concepto": l["Concepto"],
+            "Periodo": "%s – %s" % (r.inicio.strftime("%d/%m/%Y"), r.fin.strftime("%d/%m/%Y")),
+            "MWh": round(r.energia_mwh, 3),
+            "Facturado €/MWh": round(precio_fact, 6) if precio_fact is not None else None,
+            "Recalculado €/MWh": round(r.precio_efectivo, 6),
+            "Facturado €": r.facturado, "Recalculado €": round(r.importe, 2),
+            "Diferencia €": round(r.diferencia, 2) if r.diferencia is not None else None,
+            "Diferencia %": round(r.diferencia_pct, 2) if r.diferencia_pct is not None else None,
+            "Veredicto": r.veredicto}
 
-    if diag:
-        st.subheader("Diagnóstico: variantes de cálculo más cercanas a lo facturado")
-        st.caption("Si una variante distinta del contrato cuadra con la factura, probablemente "
-                   "es la que ha usado la comercializadora.")
-        st.dataframe(pd.DataFrame(diag), hide_index=True, use_container_width=True)
 
-    datos_factura = {"Comercializadora": ss.get("f_comercializadora"),
-                     "Nº factura": ss.get("f_numero"),
-                     "Fecha emisión": ss.get("f_emision"),
-                     "CUPS": cups, "Tarifa": ss.get("f_tarifa"),
-                     "Consumo factura kWh": ss.get("f_consumo"),
-                     "Importe SSAA facturado €": ss.get("f_importe"),
-                     "Curva": curva.origen if curva is not None else "—"}
-    xlsx = informe.generar_excel(r, datos_factura, diag)
-    b1, b2 = st.columns(2)
-    nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", r.inicio.strftime("%Y-%m"))
-    b1.download_button("Descargar informe Excel", xlsx, nombre,
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    if b2.button("Guardar en revisiones_ssaa"):
-        ruta = informe.guardar_informe(xlsx, r, cups, ss.get("f_numero"))
-        st.success("Guardado en %s" % ruta)
+if ss.get("resultados"):
+    validos = [(l, r, d) for l, r, d in ss.resultados if r is not None]
+    for l, r, err in ss.resultados:
+        if r is None:
+            st.error("%s: %s" % (l["Concepto"], err))
+    if validos:
+        resumen = [fila_resumen(l, r) for l, r, _d in validos]
+        tot_f = sum(r.facturado or 0 for _l, r, _d in validos)
+        tot_r = sum(r.importe for _l, r, _d in validos)
+        m = st.columns(3)
+        m[0].metric("Total facturado", "%.2f €" % tot_f)
+        m[1].metric("Total recalculado", "%.2f €" % tot_r)
+        m[2].metric("Diferencia (facturado − recalculado)", "%+.2f €" % (tot_f - tot_r))
+        st.dataframe(pd.DataFrame(resumen), hide_index=True, use_container_width=True)
+
+    for i, (l, r, diag) in enumerate(validos, 1):
+        with st.expander("%d. %s — :%s[%s]" % (i, l["Concepto"], colores.get(r.veredicto, "gray"),
+                                               r.veredicto), expanded=len(validos) == 1):
+            m = st.columns(4)
+            m[0].metric("Índice medio aritmético", "%.6f €/MWh" % r.indice_medio)
+            m[1].metric("Índice ponderado", "%.6f €/MWh" % r.indice_ponderado
+                        if r.indice_ponderado is not None else "—")
+            m[2].metric("Precio aplicado", "%.6f €/MWh" % r.precio_aplicado)
+            m[3].metric("Pérdidas aplicadas", "%.4f %%" % r.perd_aplicada)
+            for a in r.avisos:
+                st.warning(a)
+            st.caption("Datos ESIOS: " + "; ".join("%s: %s" % kv for kv in r.liquidaciones.items()))
+            filas = [{"Momento": dt.datetime.combine(k[0], dt.time()) + dt.timedelta(
+                          minutes=(k[1] - 1) * 60 + ((k[2] - 1) * 15 if len(k) == 3 else 0)),
+                      "Índice €/MWh": v, "Consumo kWh": e}
+                     for k, e, v, _p, _pr, _i in r.detalle]
+            df = pd.DataFrame(filas).set_index("Momento")
+            st.line_chart(df[["Índice €/MWh"]], height=220)
+            if curva is not None:
+                st.bar_chart(df[["Consumo kWh"]], height=180)
+            if diag:
+                st.markdown("**Diagnóstico**: variantes de cálculo más cercanas a lo facturado. "
+                            "Si una distinta del contrato cuadra, probablemente es la que ha "
+                            "usado la comercializadora.")
+                st.dataframe(pd.DataFrame(diag), hide_index=True, use_container_width=True)
+
+    if validos:
+        datos_factura = {"Comercializadora": ss.get("f_comercializadora"),
+                         "Nº factura": ss.get("f_numero"),
+                         "Fecha emisión": ss.get("f_emision"),
+                         "CUPS": cups, "Tarifa": ss.get("f_tarifa"),
+                         "Periodo facturado": "%s – %s" % (ss.get("f_inicio"), ss.get("f_fin")),
+                         "Energía facturada kWh": ss.get("f_consumo"),
+                         "Curva": curva.origen if curva is not None else "—"}
+        xlsx = informe.generar_excel([(fila_resumen(l, r), r, d) for l, r, d in validos],
+                                     datos_factura)
+        b1, b2 = st.columns(2)
+        nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", ss.get("f_numero") or "")
+        b1.download_button("Descargar informe Excel", xlsx, nombre,
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        if b2.button("Guardar en revisiones_ssaa"):
+            ruta = informe.guardar_informe(xlsx, validos[0][1], cups, ss.get("f_numero"))
+            st.success("Guardado en %s" % ruta)

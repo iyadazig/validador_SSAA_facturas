@@ -79,8 +79,22 @@ def descripcion_contrato(c):
     return filas
 
 
-def generar_excel(r, factura, diagnostico=None):
-    """Excel de la revision en bytes. `factura` es un dict de campos a mostrar."""
+def _cabecera(ws, cab, ancho=14):
+    ws.append(cab)
+    for i in range(1, len(cab) + 1):
+        ws.cell(1, i).font = NEGRITA
+        ws.cell(1, i).fill = CABECERA
+        ws.cell(1, i).alignment = Alignment(wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = ancho
+    ws.freeze_panes = "A2"
+
+
+def generar_excel(lineas, factura):
+    """Excel de la revision en bytes.
+
+    lineas: [(resumen dict, Resultado, diagnostico)], una por linea de SSAA.
+    factura: dict de campos de cabecera a mostrar.
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen"
@@ -88,67 +102,70 @@ def generar_excel(r, factura, diagnostico=None):
     fila = _titulo(ws, fila + 1, "Factura")
     fila = _tabla(ws, fila, list(factura.items()))
     fila = _titulo(ws, fila, "Cláusula del contrato")
-    fila = _tabla(ws, fila, descripcion_contrato(r.contrato))
-    fila = _titulo(ws, fila, "Resultado")
-    filas = [("Periodo", "%s a %s" % (r.inicio.strftime("%d/%m/%Y"), r.fin.strftime("%d/%m/%Y"))),
-             ("Energía MWh", round(r.energia_mwh, 6)),
-             ("Índice medio aritmético €/MWh", round(r.indice_medio, 6))]
-    if r.indice_ponderado is not None:
-        filas.append(("Índice medio ponderado €/MWh", round(r.indice_ponderado, 6)))
-    filas += [("Precio aplicado €/MWh (antes de pérdidas)", round(r.precio_aplicado, 6)),
-              ("Pérdidas aplicadas %", round(r.perd_aplicada, 4)),
-              ("Importe recalculado €", round(r.importe, 2)),
-              ("Importe facturado €", r.facturado),
-              ("Diferencia € (facturado − recalculado)",
-               round(r.diferencia, 2) if r.diferencia is not None else None),
-              ("Diferencia %", round(r.diferencia_pct, 3) if r.diferencia_pct is not None else None),
-              ("Veredicto", r.veredicto)]
-    fila_ver = fila + len(filas) - 1
-    fila = _tabla(ws, fila, filas)
-    if r.veredicto in COLORES:
-        ws.cell(fila_ver, 2).fill = PatternFill("solid", fgColor=COLORES[r.veredicto])
-        ws.cell(fila_ver, 2).font = NEGRITA
-    fila = _titulo(ws, fila, "Datos ESIOS usados")
-    fila = _tabla(ws, fila, list(r.liquidaciones.items()) or [("—", "")])
-    if r.avisos:
-        fila = _titulo(ws, fila, "Avisos")
-        for a in r.avisos:
-            ws.cell(fila, 1, a)
-            fila += 1
-    ws.column_dimensions["A"].width = 44
-    ws.column_dimensions["B"].width = 60
+    fila = _tabla(ws, fila, descripcion_contrato(lineas[0][1].contrato))
 
-    # detalle hora a hora
-    wd = wb.create_sheet("Detalle")
-    cab = ["Fecha", "Hora"] + (["Cuarto"] if r.resolucion == "qh" else []) + \
-          ["Consumo kWh", "Índice €/MWh", "Pérdidas %"]
-    if r.contrato.agregacion == "horaria":
-        cab += ["Precio aplicado €/MWh", "Importe €"]
-    wd.append(cab)
-    for k, e, v, p, precio, imp in r.detalle:
-        fila_d = [k[0], k[1]] + ([k[2]] if r.resolucion == "qh" else []) + [e, v, p]
-        if r.contrato.agregacion == "horaria":
-            fila_d += [precio, imp]
-        wd.append(fila_d)
+    fila = _titulo(ws, fila, "Líneas de SSAA")
+    cab = list(lineas[0][0].keys())
     for i, c in enumerate(cab, 1):
-        wd.cell(1, i).font = NEGRITA
-        wd.cell(1, i).fill = CABECERA
-        wd.cell(1, i).alignment = Alignment(wrap_text=True)
-        wd.column_dimensions[get_column_letter(i)].width = 14
-    for celda in wd["A"][1:]:
-        celda.number_format = "dd/mm/yyyy"
-    wd.freeze_panes = "A2"
+        ws.cell(fila, i, c).font = NEGRITA
+        ws.cell(fila, i).fill = CABECERA
+        ws.cell(fila, i).alignment = Alignment(wrap_text=True)
+    fila += 1
+    for resumen, r, _d in lineas:
+        for i, c in enumerate(cab, 1):
+            ws.cell(fila, i, resumen[c])
+        if r.veredicto in COLORES:
+            celda = ws.cell(fila, cab.index("Veredicto") + 1)
+            celda.fill = PatternFill("solid", fgColor=COLORES[r.veredicto])
+            celda.font = NEGRITA
+        fila += 1
+    tot_f = sum(r.facturado or 0 for _x, r, _d in lineas)
+    tot_r = sum(r.importe for _x, r, _d in lineas)
+    fila = _tabla(ws, fila + 1, [("Total facturado €", round(tot_f, 2)),
+                                 ("Total recalculado €", round(tot_r, 2)),
+                                 ("Diferencia € (facturado − recalculado)", round(tot_f - tot_r, 2))])
 
-    if diagnostico:
+    for n, (resumen, r, _d) in enumerate(lineas, 1):
+        fila = _titulo(ws, fila, "%d. %s" % (n, resumen["Concepto"]))
+        filas = [("Índice medio aritmético €/MWh", round(r.indice_medio, 6))]
+        if r.indice_ponderado is not None:
+            filas.append(("Índice medio ponderado €/MWh", round(r.indice_ponderado, 6)))
+        filas += [("Precio aplicado €/MWh (antes de pérdidas)", round(r.precio_aplicado, 6)),
+                  ("Pérdidas aplicadas %", round(r.perd_aplicada, 4)),
+                  ("Datos ESIOS", "; ".join("%s: %s" % kv for kv in r.liquidaciones.items()))]
+        filas += [("Aviso", a) for a in r.avisos]
+        fila = _tabla(ws, fila, filas)
+    ws.column_dimensions["A"].width = 44
+    ws.column_dimensions["B"].width = 26
+    for col in "CDEFGHIJ":
+        ws.column_dimensions[col].width = 16
+
+    # detalle hora a hora de todas las lineas
+    r0 = lineas[0][1]
+    qh = any(r.resolucion == "qh" for _x, r, _d in lineas)
+    horaria = r0.contrato.agregacion == "horaria"
+    wd = wb.create_sheet("Detalle")
+    cab = ["Línea", "Fecha", "Hora"] + (["Cuarto"] if qh else []) + \
+          ["Consumo kWh", "Índice €/MWh", "Pérdidas %"] + \
+          (["Precio aplicado €/MWh", "Importe €"] if horaria else [])
+    _cabecera(wd, cab)
+    for n, (_x, r, _d) in enumerate(lineas, 1):
+        for k, e, v, p, precio, imp in r.detalle:
+            fila_d = [n, k[0], k[1]] + ([k[2] if len(k) == 3 else None] if qh else []) + [e, v, p]
+            if horaria:
+                fila_d += [precio, imp]
+            wd.append(fila_d)
+    for celda in wd["B"][1:]:
+        celda.number_format = "dd/mm/yyyy"
+
+    diags = [(n, d) for n, (_x, _r, d) in enumerate(lineas, 1) if d]
+    if diags:
         wg = wb.create_sheet("Diagnóstico")
-        cab = list(diagnostico[0].keys())
-        wg.append(cab)
-        for d in diagnostico:
-            wg.append([d[c] for c in cab])
-        for i in range(1, len(cab) + 1):
-            wg.cell(1, i).font = NEGRITA
-            wg.cell(1, i).fill = CABECERA
-            wg.column_dimensions[get_column_letter(i)].width = 26
+        cab = ["Línea"] + list(diags[0][1][0].keys())
+        _cabecera(wg, cab, 24)
+        for n, diag in diags:
+            for d in diag:
+                wg.append([n] + [d[c] for c in cab[1:]])
 
     buf = io.BytesIO()
     wb.save(buf)

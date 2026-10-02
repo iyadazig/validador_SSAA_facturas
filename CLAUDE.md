@@ -28,10 +28,10 @@ así los días de cambio de hora no necesitan zona horaria.
 | `ssaa_datos_esios.py` | Lectura de los Excel de ESIOS a series |
 | `curva_consumo.py` | Lectura de curvas CSV/XLSX/XLS (horaria o QH) y reparto de los días de cambio de hora |
 | `gemweb.py` | API de Gemweb (adaptado de `estudio_potencia_cuartohorario/potencia/gemweb.py`): CUPS → id, curva cuartohoraria |
-| `lectores_factura/` | `base.py`: `DatosFactura` y lector genérico (PyMuPDF + regex). Un módulo por comercializadora, registrado en `LECTORES` |
+| `lectores_factura/` | `base.py`: `DatosFactura`, `LineaSSAA` y lector genérico (PyMuPDF + regex). Lectores `endesa.py` y `naturgy.py` (grandes cuentas), elegidos por CIF de la comercializadora y registrados en `LECTORES` |
 | `informe.py` | Excel de revisión y fichas de contrato (`contratos_ssaa.json`, clave CUPS) |
 | `tests/` | `python -m unittest discover tests`. Incluye las medias reales del Total SAH abr-jun 2026 y una API de Gemweb simulada |
-| `facturas_ejemplo/` | Muestras para construir los lectores |
+| `facturas_ejemplo/` | Facturas reales de muestra y `esperado.json` con lo que debe leer cada una (fuera de git; lo usa `tests/test_lectores.py`) |
 | `revisiones_ssaa/` | Informes guardados `AAAA-MM_CUPS_nºfactura.xlsx` |
 
 ## Gemweb
@@ -51,6 +51,14 @@ cifradas con DPAPI); `%APPDATA%\EstudioPotencia\gemweb.json`;
 datos de clientes (facturas, curvas, CUPS reales, condiciones de contrato, informes) ni
 credenciales: están en `.gitignore`. Las pruebas usan CUPS ficticios y bandas genéricas.
 
+## Facturas
+
+Una factura puede traer varias líneas de SSAA de periodos distintos (Naturgy regulariza
+en la factura de julio los meses de abril, mayo y junio, cada uno con su consumo). Cada
+`LineaSSAA` lleva su periodo, kWh, precio €/kWh e importe y se revisa por separado.
+Al añadir una factura de muestra, añadir su entrada en `facturas_ejemplo/esperado.json`.
+Las pruebas que van a git usan textos sintéticos con la maqueta y cifras inventadas.
+
 ## Mecanismos soportados
 
 Indexado (+prima), techo, suelo y techo, banda con regularización (cargo/abono; el
@@ -61,7 +69,8 @@ Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si
 
 ## Pendiente
 
-- Lectores específicos por comercializadora, con las facturas de `facturas_ejemplo/`
-  (hoy solo el genérico; todo lo leído es editable en la app).
+- Más comercializadoras y tipologías de factura según lleguen muestras.
+- Condiciones de SSAA de los contratos de las dos facturas de muestra: con variantes
+  simples (SAH/SSAA ESIOS, pérdidas, 1,015) no sale una referencia constante en Naturgy.
 - El 30/09/2026 del Excel de componentes (avance A2) trae valores imposibles (Total SSAA
   ~588 €/MWh, RT3 ~21.645): el motor lo avisa como anómalo.

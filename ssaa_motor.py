@@ -263,10 +263,6 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
         if sin:
             avisos.append("La curva no tiene %d %s del periodo (se toman como 0 kWh)."
                           % (len(sin), "cuartos" if resolucion == "qh" else "horas"))
-        fuera = [k for k in cv if k[0] < inicio or k[0] > fin]
-        if fuera:
-            avisos.append("La curva trae %d registros fuera del periodo de la factura; "
-                          "se ignoran." % len(fuera))
         e_curva = sum(cv.get(k, 0.0) for k in claves)
         if consumo_kwh:
             dif = (e_curva - consumo_kwh) / consumo_kwh * 100
