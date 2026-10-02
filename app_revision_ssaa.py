@@ -452,6 +452,17 @@ if ss.get("resultados"):
             for a in r.avisos:
                 st.warning(a)
             st.caption("Datos ESIOS: " + "; ".join("%s: %s" % kv for kv in r.liquidaciones.items()))
+            st.markdown("**Fórmulas aplicadas**")
+            st.code("\n".join(motor.formula_clausula(r.contrato)), language=None)
+            st.markdown("**Cálculo paso a paso**")
+            st.dataframe(pd.DataFrame([{
+                "Paso": p["paso"], "Concepto": p["concepto"], "Fórmula": p["formula"],
+                "Sustitución": p["sustitucion"],
+                "Resultado": p["valor"] if isinstance(p["valor"], str) else
+                motor._f(p["valor"], 2 if p["unidad"] == "€" else 9 if p["unidad"] == "€/kWh"
+                         else 0 if p["unidad"] in ("horas", "cuartos") else 6),
+                "Unidad": p["unidad"]} for p in motor.pasos_calculo(r)]),
+                hide_index=True, use_container_width=True)
             filas = [{"Momento": dt.datetime.combine(k[0], dt.time()) + dt.timedelta(
                           minutes=(k[1] - 1) * 60 + ((k[2] - 1) * 15 if len(k) == 3 else 0)),
                       "Índice €/MWh": v, "Consumo kWh": e}

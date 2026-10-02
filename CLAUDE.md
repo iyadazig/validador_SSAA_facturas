@@ -29,7 +29,7 @@ así los días de cambio de hora no necesitan zona horaria.
 | `curva_consumo.py` | Lectura de curvas CSV/XLSX/XLS (horaria o QH) y reparto de los días de cambio de hora |
 | `gemweb.py` | API de Gemweb (adaptado de `estudio_potencia_cuartohorario/potencia/gemweb.py`): CUPS → id, curva cuartohoraria |
 | `lectores_factura/` | `base.py`: `DatosFactura`, `LineaSSAA` y lector genérico (PyMuPDF + regex). Lectores `endesa.py` y `naturgy.py` (grandes cuentas), elegidos por CIF de la comercializadora y registrados en `LECTORES` |
-| `informe.py` | Excel de revisión y fichas de contrato (`contratos_ssaa.json`, clave CUPS) |
+| `informe.py` | Excel de revisión y fichas de contrato (`contratos_ssaa.json`, clave CUPS). Hojas: Resumen (factura, cláusula, fórmulas, líneas), «Cálculo N» por línea (parámetros + pasos con fórmula, sustitución, **fórmula viva de Excel** y valor del programa), «Detalle N» (datos horarios; en cláusulas hora a hora cada fila con su fórmula) y Diagnóstico |
 | `tests/` | `python -m unittest discover tests`. Incluye las medias reales del Total SAH abr-jun 2026 y una API de Gemweb simulada |
 | `facturas_ejemplo/` | Facturas reales de muestra y `esperado.json` con lo que debe leer cada una (fuera de git; lo usa `tests/test_lectores.py`) |
 | `revisiones_ssaa/` | Informes guardados `AAAA-MM_CUPS_nºfactura.xlsx` |
@@ -50,6 +50,13 @@ cifradas con DPAPI); `%APPDATA%\EstudioPotencia\gemweb.json`;
 `origin` = github.com/iyadazig/validador_SSAA_facturas. Se sube cada commit. **Nunca**
 datos de clientes (facturas, curvas, CUPS reales, condiciones de contrato, informes) ni
 credenciales: están en `.gitignore`. Las pruebas usan CUPS ficticios y bandas genéricas.
+
+## Cálculo paso a paso
+
+`ssaa_motor.formula_clausula(c)` da las fórmulas en texto y `pasos_calculo(r)` los pasos
+(clave, fórmula, sustitución, valor). El informe convierte cada clave en una fórmula de
+Excel sobre «Detalle N» y los parámetros; verificado recalculando en Excel que coincide
+con el programa en techo, banda, media ponderada e indexado cuartohorario.
 
 ## Facturas
 

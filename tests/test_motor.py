@@ -94,6 +94,22 @@ class Revision(unittest.TestCase):
             self.assertEqual(motor.revisar(c, D, D, 1000, 25.0).veredicto, "FACTURADO DE MÁS")
             self.assertEqual(motor.revisar(c, D, D, 1000, 15.0).veredicto, "FACTURADO DE MENOS")
 
+    def test_pasos_cuadran_con_el_importe(self):
+        cv = curva({(D, h): 10.0 for h in range(1, 25)})
+        with mock.patch.object(esios, "pvpc_horario", pvpc_falso(lambda h: 15.0 + h, perd=5)):
+            for kw in (dict(mecanismo="techo", techo=20, perdidas="pvpc", factor=1.015),
+                       dict(mecanismo="banda", ref_superior=40, ref_inferior=30, perdidas="pvpc"),
+                       dict(mecanismo="indexado", prima=1, agregacion="horaria", perdidas="pvpc")):
+                c = motor.Contrato(**kw)
+                r = motor.revisar(c, D, D, 240, 10.0, cv)
+                pasos = {p["clave"]: p for p in motor.pasos_calculo(r)}
+                self.assertAlmostEqual(pasos["importe"]["valor"], r.importe)
+                self.assertEqual(pasos["veredicto"]["valor"], r.veredicto)
+                if c.agregacion != "horaria":
+                    self.assertAlmostEqual(pasos["mwh"]["valor"] * pasos["precio_final"]["valor"],
+                                           r.importe)
+                self.assertTrue(motor.formula_clausula(c))
+
     def test_sin_curva_cuando_hace_falta(self):
         c = motor.Contrato(agregacion="horaria")
         with self.assertRaises(motor.ErrorRevision):

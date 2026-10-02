@@ -141,6 +141,7 @@ class Resultado:
     detalle: list = field(default_factory=list)
     avisos: list = field(default_factory=list)
     liquidaciones: dict = field(default_factory=dict)
+    tolerancia_pct: float = config.TOLERANCIA_PCT
 
     @property
     def precio_efectivo(self):
@@ -364,6 +365,7 @@ def comparar(r, facturado, tolerancia_pct=config.TOLERANCIA_PCT):
         r.veredicto = "Sin importe facturado para comparar"
         return r
     r.facturado = facturado
+    r.tolerancia_pct = tolerancia_pct
     r.diferencia = facturado - r.importe
     base = abs(r.importe) if r.importe else None
     r.diferencia_pct = r.diferencia / base * 100 if base else None
@@ -375,6 +377,174 @@ def comparar(r, facturado, tolerancia_pct=config.TOLERANCIA_PCT):
     else:
         r.veredicto = "FACTURADO DE MENOS"
     return r
+
+
+# ------------------------------------------------------------ formulas y pasos
+NOMBRE_INDICE = {"sah_pvpc": "SAHh (Total SAH horario del PVPC_DETALLE_DD, €/MWh bc)",
+                 "ssaa_esios": "SSAAh (TOTAL SSAA de ESIOS; valor horario = media de sus 4 cuartos)",
+                 "componentes": "SSAAh (suma de los componentes elegidos; horario = media de sus 4 cuartos)",
+                 "fijo": "Precio fijo"}
+NOMBRE_PERD = {"liquicomun_h": "PERDh (pérdidas horarias de la tarifa %s, liquicomún)",
+               "liquicomun_qh": "PERDqh (pérdidas cuartohorarias de la tarifa %s, liquicomún)",
+               "pvpc": "PERDh (coeficiente de pérdidas del PVPC)"}
+
+
+def formula_mecanismo(c, x="SSAA reales"):
+    """Formula en texto del precio (o diferencia) que aplica el mecanismo."""
+    m = c.mecanismo
+    if m == "techo":
+        return "Diferencia = MAX(%s − Ref. SSAA ; 0)" % x
+    if m == "banda":
+        return ("Diferencia = %s − Ref. superior si %s > Ref. superior; "
+                "−(Ref. inferior − %s) si %s < Ref. inferior; 0 en otro caso" % (x, x, x, x))
+    if m == "indexado":
+        return "Precio = %s + Prima" % x
+    if m == "indexado_techo":
+        return "Precio = MIN(%s ; Precio máximo) + Prima" % x
+    if m == "indexado_suelo_techo":
+        return "Precio = MAX(Precio mínimo ; MIN(%s ; Precio máximo)) + Prima" % x
+    return "Precio = Precio fijo de contrato"
+
+
+def formula_clausula(c):
+    """Lineas de texto con las formulas de la clausula."""
+    ind = NOMBRE_INDICE[c.indice]
+    out = []
+    if c.agregacion == "horaria":
+        out.append("Importe = Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100) × Factor ]")
+        out.append("P(SSAAh): " + formula_mecanismo(c, "SSAAh"))
+        out.append("Eh = consumo de la hora (o cuarto) en kWh, de la curva; " + ind)
+    else:
+        if c.agregacion == "media_ponderada":
+            out.append("SSAA reales = Σ(Eh × SSAAh) / Σ Eh   (media ponderada por consumo)")
+        else:
+            out.append("SSAA reales = Σ SSAAh / N   (media aritmética de las N horas del periodo)")
+        out.append("SSAAh = " + ind)
+        out.append(formula_mecanismo(c))
+        out.append("Importe = Consumo real MWh × %s × (1 + perd/100) × Factor"
+                   % ("Diferencia" if c.mecanismo in REGULARIZACIONES else "Precio"))
+    if c.perdidas in NOMBRE_PERD:
+        nombre = NOMBRE_PERD[c.perdidas] % c.tarifa if "%s" in NOMBRE_PERD[c.perdidas] \
+            else NOMBRE_PERD[c.perdidas]
+        if c.agregacion == "horaria":
+            out.append("PERDh = " + nombre)
+        elif c.perd_agregacion == "media_ponderada":
+            out.append("perd = Σ(Eh × PERDh) / Σ Eh, con " + nombre)
+        else:
+            out.append("perd = Σ PERDh / N   (media aritmética), con " + nombre)
+    elif c.perdidas == "fijo":
+        out.append("perd = %s %% (coeficiente fijo de contrato)" % _f(c.perd_fijo, 4))
+    else:
+        out.append("perd = 0 (sin pérdidas)")
+    out.append("Factor = %s%s" % (_f(c.factor, 4), " (impuesto municipal 1,5 %)"
+                                  if abs(c.factor - 1.015) < 1e-9 else ""))
+    return out
+
+
+def _f(v, d=6):
+    """Numero con coma decimal para los textos."""
+    if v is None:
+        return "—"
+    return ("%.*f" % (d, v)).replace(".", ",")
+
+
+def pasos_calculo(r):
+    """Calculo paso a paso: [{paso, clave, concepto, formula, sustitucion, valor, unidad}].
+    `clave` identifica el paso para que el informe Excel ponga su formula viva."""
+    c = r.contrato
+    pasos = []
+
+    def paso(clave, concepto, formula, sustitucion, valor, unidad=""):
+        pasos.append({"paso": len(pasos) + 1, "clave": clave, "concepto": concepto,
+                      "formula": formula, "sustitucion": sustitucion, "valor": valor,
+                      "unidad": unidad})
+
+    vals = [v for _k, _e, v, _p, _pr, _i in r.detalle]
+    perds = [p for _k, _e, _v, p, _pr, _i in r.detalle]
+    cons = [e or 0.0 for _k, e, _v, _p, _pr, _i in r.detalle]
+    n = len(vals)
+    unidad_n = "cuartos" if r.resolucion == "qh" else "horas"
+    paso("n", "Número de %s del periodo" % unidad_n, "N = %s del %s al %s" % (
+        unidad_n, r.inicio.strftime("%d/%m/%Y"), r.fin.strftime("%d/%m/%Y")), "", n, unidad_n)
+
+    if c.agregacion == "horaria":
+        paso("mwh", "Consumo real (curva)", "Consumo = Σ Eh / 1000",
+             "%s kWh / 1000" % _f(sum(cons), 3), r.energia_mwh, "MWh")
+        paso("ssaa", "SSAA medio ponderado (informativo)", "Σ(Eh × SSAAh) / Σ Eh", "",
+             r.indice_ponderado, "€/MWh")
+        paso("importe", "Importe recalculado",
+             "Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100) × Factor ];  " +
+             formula_mecanismo(c, "SSAAh"),
+             "suma de la columna Importe de la hoja de detalle", r.importe, "€")
+        paso("precio_ef", "Precio efectivo", "Importe / Consumo",
+             "%s / %s" % (_f(r.importe, 2), _f(r.energia_mwh, 6)), r.precio_efectivo, "€/MWh")
+    else:
+        if c.agregacion == "media_ponderada":
+            paso("ssaa", "SSAA reales (media ponderada)", "Σ(Eh × SSAAh) / Σ Eh",
+                 "%s / %s" % (_f(sum(e * v for e, v in zip(cons, vals)), 4), _f(sum(cons), 3)),
+                 r.indice_aplicado, "€/MWh")
+        else:
+            paso("ssaa", "SSAA reales (media aritmética)", "Σ SSAAh / N",
+                 "%s / %d" % (_f(sum(vals), 4), n), r.indice_aplicado, "€/MWh")
+        if c.perdidas == "fijo":
+            paso("perd", "Pérdidas (perd)", "Coeficiente fijo de contrato", "",
+                 r.perd_aplicada, "%")
+        elif c.perdidas == "ninguna":
+            paso("perd", "Pérdidas (perd)", "Sin pérdidas", "", 0.0, "%")
+        elif c.perd_agregacion == "media_ponderada":
+            paso("perd", "Pérdidas (perd, media ponderada)", "Σ(Eh × PERDh) / Σ Eh",
+                 "%s / %s" % (_f(sum(e * p for e, p in zip(cons, perds)), 4), _f(sum(cons), 3)),
+                 r.perd_aplicada, "%")
+        else:
+            paso("perd", "Pérdidas (perd, media aritmética)", "Σ PERDh / N",
+                 "%s / %d" % (_f(sum(perds), 4), n), r.perd_aplicada, "%")
+
+        x = _f(r.indice_aplicado)
+        m = c.mecanismo
+        if m == "techo":
+            sust = "MAX(%s − %s ; 0)" % (x, _f(c.techo, 3))
+        elif m == "banda":
+            if r.indice_aplicado > c.ref_superior:
+                sust = "%s − %s (supera la ref. superior: cargo)" % (x, _f(c.ref_superior, 3))
+            elif r.indice_aplicado < c.ref_inferior:
+                sust = "−(%s − %s) (por debajo de la ref. inferior: abono)" % (_f(c.ref_inferior, 3), x)
+            else:
+                sust = "%s está entre %s y %s: sin regularización" % (
+                    x, _f(c.ref_inferior, 3), _f(c.ref_superior, 3))
+        elif m == "indexado":
+            sust = "%s + %s" % (x, _f(c.prima, 3))
+        elif m == "indexado_techo":
+            sust = "MIN(%s ; %s) + %s" % (x, _f(c.techo, 3), _f(c.prima, 3))
+        elif m == "indexado_suelo_techo":
+            sust = "MAX(%s ; MIN(%s ; %s)) + %s" % (_f(c.suelo, 3), x, _f(c.techo, 3), _f(c.prima, 3))
+        else:
+            sust = _f(c.precio_fijo, 3)
+        paso("precio", "Diferencia sobre la referencia" if m in REGULARIZACIONES
+             else "Precio de SSAA", formula_mecanismo(c), sust, r.precio_aplicado, "€/MWh")
+        precio_final = r.precio_aplicado * (1 + r.perd_aplicada / 100) * c.factor
+        paso("precio_final", "Precio final con pérdidas y factor",
+             "%s × (1 + perd/100) × Factor" % ("Diferencia" if m in REGULARIZACIONES else "Precio"),
+             "%s × (1 + %s/100) × %s" % (_f(r.precio_aplicado), _f(r.perd_aplicada, 4),
+                                         _f(c.factor, 4)), precio_final, "€/MWh")
+        paso("precio_kwh", "Precio final en €/kWh", "Precio final / 1000",
+             "%s / 1000" % _f(precio_final), precio_final / 1000, "€/kWh")
+        paso("mwh", "Consumo real", "Consumo kWh / 1000",
+             "%s / 1000" % _f(r.energia_mwh * 1000, 3), r.energia_mwh, "MWh")
+        paso("importe", "Importe recalculado", "Consumo MWh × Precio final",
+             "%s × %s" % (_f(r.energia_mwh), _f(precio_final)), r.importe, "€")
+
+    if r.facturado is not None:
+        paso("facturado", "Importe facturado", "Importe de la línea en la factura", "",
+             r.facturado, "€")
+        paso("dif", "Diferencia", "Facturado − Recalculado",
+             "%s − %s" % (_f(r.facturado, 2), _f(r.importe, 2)), r.diferencia, "€")
+        paso("dif_pct", "Diferencia relativa", "Diferencia / |Recalculado| × 100",
+             "%s / %s × 100" % (_f(r.diferencia, 2), _f(abs(r.importe), 2)),
+             r.diferencia_pct, "%")
+        paso("veredicto", "Veredicto",
+             "CORRECTO si |Diferencia| < 0,01 € o |Diferencia %%| ≤ %s %%; si no, de más o "
+             "de menos según el signo" % _f(r.tolerancia_pct, 2), "", r.veredicto)
+    return pasos
 
 
 # ---------------------------------------------------------------- diagnostico
