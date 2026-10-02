@@ -57,6 +57,15 @@ with st.sidebar:
     st.code("python descarga_PVPC_diario_excel.py AAAA-MM-DD AAAA-MM-DD\n"
             "python descarga_componentes_precio_excel.py", language="bat")
 
+    if config.EJECUTABLE:
+        st.header("Aplicación")
+        st.caption("Las fichas de contrato se guardan en %s" % config.FICHERO_CONTRATOS)
+        if st.button("Cerrar la aplicación", use_container_width=True):
+            st.success("Aplicación cerrada. Ya puedes cerrar esta pestaña del navegador.")
+            import os
+            import threading
+            threading.Timer(1.0, lambda: os._exit(0)).start()
+
     st.header("Gemweb")
     cred, origen_cred = gemweb.cargar_credenciales()
     if cred:

@@ -2,9 +2,19 @@
 """Rutas y parametros comunes del revisor de SSAA."""
 
 import os
+import sys
 from pathlib import Path
 
-CARPETA = Path(__file__).resolve().parent
+# Como ejecutable (PyInstaller) el codigo se descomprime en una carpeta temporal que
+# se borra al cerrar: los DATOS (fichas, revisiones...) van siempre junto al .exe y los
+# RECURSOS (logo, icono) se leen del paquete.
+EJECUTABLE = getattr(sys, "frozen", False)
+if EJECUTABLE:
+    CARPETA = Path(os.environ.get("SSAA_CARPETA_PROGRAMA", Path(sys.executable).resolve().parent))
+    RECURSOS = Path(getattr(sys, "_MEIPASS", CARPETA))
+else:
+    CARPETA = Path(__file__).resolve().parent
+    RECURSOS = CARPETA
 
 # Excel historicos de ESIOS (los mantiene el proyecto Descarga_datos_ESIOS).
 CARPETA_ESIOS = Path(os.environ.get(
@@ -18,4 +28,3 @@ CARPETA_EJEMPLOS = CARPETA / "facturas_ejemplo"
 TOLERANCIA_PCT = 0.5
 # Un SSAA horario por encima de esto se marca como sospechoso (dato de avance roto).
 UMBRAL_ANOMALO = 200.0
-

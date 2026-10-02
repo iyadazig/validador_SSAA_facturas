@@ -7,6 +7,18 @@ de ESIOS y dice si lo facturado es correcto.
 **Coste cero**: todo corre en local. Nada de Streamlit Cloud, APIs de IA ni servicios de
 pago. La factura y la curva no salen del PC.
 
+## Ejecutable
+
+`python construir_exe.py` genera **«Revisor SSAA.exe»** en esta carpeta (PyInstaller, un solo
+fichero, sin consola; `RevisorSSAA.spec`). El .exe ejecuta `lanzador.py`: arranca Streamlit
+en http://localhost:8765 solo para este equipo y abre el navegador (si ya está abierta, solo
+abre el navegador). Se cierra con «Cerrar la aplicación» en la barra lateral.
+Los datos van junto al .exe (`config.CARPETA` = carpeta del .exe): `contratos_ssaa.json`,
+`revisiones_ssaa\`; los recursos (logo, tema) dentro del paquete (`config.RECURSOS`).
+Los Excel de ESIOS se leen de `..\Descarga_datos_ESIOS`. No lleva credenciales: Gemweb las
+busca igual que la app. El .exe, `build\` y `dist\` no van a git. Tras cambiar el código hay
+que volver a ejecutar `construir_exe.py`.
+
 ## Imagen corporativa
 
 `estilo.py` (CSS, cabecera con logo, secciones numeradas, pie y traductor de los textos

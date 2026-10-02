@@ -21,7 +21,7 @@ from ssaa_motor import (Contrato, INDICES, AGREGACIONES, MECANISMOS, PERDIDAS,
 GRANATE = "970000"
 NEGRITA = Font(name="Arial", bold=True)
 CABECERA = PatternFill("solid", fgColor="F3D9D9")
-LOGO = config.CARPETA / "assets" / "logo_geype_peq.png"
+LOGO = config.RECURSOS / "assets" / "logo_geype_peq.png"
 COLORES = {"CORRECTO": "C6EFCE", "FACTURADO DE MÁS": "FFC7CE", "FACTURADO DE MENOS": "FFEB9C"}
 
 

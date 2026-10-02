@@ -21,9 +21,9 @@ ROSA = "#F3D9D9"
 VERDE = "#2E7D32"
 AMBAR = "#B26A00"
 
-LOGO = config.CARPETA / "assets" / "logo_geype.png"
-LOGO_PEQ = config.CARPETA / "assets" / "logo_geype_peq.png"
-ICONO = config.CARPETA / "assets" / "icono.ico"
+LOGO = config.RECURSOS / "assets" / "logo_geype.png"
+LOGO_PEQ = config.RECURSOS / "assets" / "logo_geype_peq.png"
+ICONO = config.RECURSOS / "assets" / "icono.ico"
 
 COLOR_VEREDICTO = {"CORRECTO": VERDE, "FACTURADO DE MÁS": GRANATE,
                    "FACTURADO DE MENOS": AMBAR}

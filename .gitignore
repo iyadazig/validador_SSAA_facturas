@@ -1,4 +1,7 @@
 __pycache__/
+build/
+dist/
+*.exe
 *.py[cod]
 .pytest_cache/
 .venv/
