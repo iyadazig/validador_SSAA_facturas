@@ -14,7 +14,8 @@ from openpyxl.utils import get_column_letter
 import config
 from ssaa_motor import (Contrato, INDICES, AGREGACIONES, MECANISMOS, PERDIDAS,
                         PERD_AGREGACIONES, PERIODOS_CALCULO, REGULARIZACIONES_PERIODO,
-                        formula_clausula, pasos_calculo)
+                        formula_clausula, pasos_calculo, conclusion_componentes,
+                        tabla_componentes)
 
 NEGRITA = Font(bold=True)
 CABECERA = PatternFill("solid", fgColor="DDEBF7")
@@ -380,12 +381,21 @@ def generar_excel(lineas, factura, totales=None, componentes=None):
 
     if componentes:
         wc = wb.create_sheet("Componentes PFMHORAS")
+        c0 = lineas[0][1].contrato
         wc.cell(1, 1, "Comprobación de qué términos del PFMHORAS_COM reproducen lo facturado "
-                      "(todas las líneas). «Ref. implícita» es la referencia que haría cuadrar "
-                      "cada línea; si no varía entre líneas, la comercializadora ha usado esa "
-                      "combinación con esa referencia.").font = NEGRITA
-        _tabla_dicts(wc, 3, componentes)
-        for i, ancho in enumerate((70, 14, 14, 12, 16, 16, 18, 12), 1):
+                      "(todas las líneas)").font = Font(bold=True, size=12)
+        concl = conclusion_componentes(componentes, c0)
+        if concl:
+            celda = wc.cell(2, 1, "Conclusión: " + concl[1])
+            celda.font = NEGRITA
+            celda.fill = PatternFill("solid", fgColor={"ok": "C6EFCE", "aviso": "FFEB9C",
+                                                       "error": "FFC7CE"}[concl[0]])
+        wc.cell(3, 1, "«Recalculado con las ref. del contrato» usa las referencias de la ficha. "
+                      "«Ref. que haría cuadrar lo facturado» es la referencia con la que cada "
+                      "combinación daría exactamente lo facturado; si es la misma en todas las "
+                      "líneas, la comercializadora ha usado esa combinación con esa referencia.")
+        _tabla_dicts(wc, 5, tabla_componentes(componentes))
+        for i, ancho in enumerate((70, 11, 18, 13, 13, 16, 20, 22), 1):
             wc.column_dimensions[get_column_letter(i)].width = ancho
 
     diags = [(n, d) for n, (_x, _r, d) in enumerate(lineas, 1) if d]

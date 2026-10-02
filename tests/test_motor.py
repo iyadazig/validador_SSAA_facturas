@@ -168,13 +168,28 @@ class PFMHorasReales(unittest.TestCase):
                                ref_superior=17.0)
         grupos = [([(a, b, k)], round(motor.revisar(verdad, a, b, k, None).importe, 2))
                   for a, b, k in self.MESES]
-        filas = motor.comprobar_componentes(self.contrato(), grupos)
+        contrato = self.contrato()
+        filas = motor.comprobar_componentes(contrato, grupos)
         rpd = [f for f in filas
                if f["Componentes sumados"] == "Restricciones + Procesos OS + Desvíos"]
         self.assertEqual(len(rpd), 1)
-        self.assertAlmostEqual(rpd[0]["Ref. implícita €/MWh"], 17.0, places=3)
-        self.assertLess(rpd[0]["Variación de la ref. entre líneas"], 0.001)
-        self.assertTrue(any(f["Es la del contrato"] for f in filas))
+        self.assertAlmostEqual(rpd[0]["Ref. que haría cuadrar lo facturado €/MWh"], 17.0, places=3)
+        self.assertTrue(rpd[0]["_estable"])
+        self.assertTrue(any(f["Son los del contrato"] for f in filas))
+        nivel, texto = motor.conclusion_componentes(filas, contrato)
+        self.assertEqual(nivel, "error")
+        # con los componentes del contrato y otra referencia
+        c3 = self.contrato(componentes_pfm=["Restricciones", "Procesos OS", "Desvíos"],
+                           componentes_pfm_contrato=True)
+        nivel, texto = motor.conclusion_componentes(motor.comprobar_componentes(c3, grupos), c3)
+        self.assertEqual(nivel, "error")
+        self.assertIn("Los componentes son los del contrato", texto)
+        self.assertIn("17,0000", texto)
+        # y si la ficha tiene la referencia buena, cuadra
+        c17 = self.contrato(componentes_pfm=["Restricciones", "Procesos OS", "Desvíos"],
+                            ref_superior=17.0)
+        nivel, _ = motor.conclusion_componentes(motor.comprobar_componentes(c17, grupos), c17)
+        self.assertEqual(nivel, "ok")
 
     def test_perdidas_estandar(self):
         self.assertEqual(motor.perd_estandar("6.1TD"), 7.0)

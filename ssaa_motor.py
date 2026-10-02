@@ -459,30 +459,98 @@ def comprobar_componentes(contrato, grupos, curva=None, maximo=8):
                         pesos.append(r.energia_mwh)
             except ErrorRevision:
                 continue
+            dif_max = max(abs(f - i) for f, i in zip(facts, imps))
+            # media ponderada por MWh: en lineas de poco consumo el redondeo al
+            # centimo del importe mueve mucho la referencia
+            ref = sum(a * b for a, b in zip(refs, pesos)) / sum(pesos) if refs else None
+            var = max(refs) - min(refs) if len(refs) > 1 else (0.0 if refs else None)
+            cuadra = dif_max <= TOL_CUADRE
+            estable = var is not None and var < TOL_REF
             filas.append({
                 "Componentes sumados": " + ".join(comb),
-                "Recalculado €": round(sum(imps), 2),
+                "Son los del contrato": "Sí" if set(comb) == set(contrato.componentes_pfm) else "",
+                "Recalculado con las ref. del contrato €": round(sum(imps), 2),
                 "Facturado €": round(sum(facts), 2),
-                "Dif. €": round(sum(facts) - sum(imps), 2),
-                "Dif. máx. por línea €": round(max(abs(f - i) for f, i in zip(facts, imps)), 2),
-                # media ponderada por MWh: en lineas de poco consumo el redondeo al
-                # centimo del importe mueve mucho la referencia
-                "Ref. implícita €/MWh": round(sum(a * b for a, b in zip(refs, pesos)) / sum(pesos), 4)
-                if refs else None,
-                "Variación de la ref. entre líneas": round(max(refs) - min(refs), 4)
-                if len(refs) > 1 else None,
-                "Es la del contrato": set(comb) == set(contrato.componentes_pfm),
+                "Diferencia €": round(sum(facts) - sum(imps), 2),
+                "¿Cuadra con las ref. del contrato?": "Sí" if cuadra else "No",
+                "Ref. que haría cuadrar lo facturado €/MWh": round(ref, 4) if ref is not None
+                else None,
+                "¿Esa ref. es la misma en todas las líneas?": "" if var is None else
+                ("Sí" if estable else "No (varía %s)" % _f(var, 4)),
+                "_dif_max": dif_max, "_var": var, "_cuadra": cuadra, "_estable": estable,
             })
-    filas.sort(key=lambda f: f["Dif. máx. por línea €"])
+    # primero lo que explica la factura: cuadra tal cual, o con una ref. constante
+    filas.sort(key=lambda f: (not f["_cuadra"], not f["_estable"],
+                              f["_var"] if f["_var"] is not None else 9e9, f["_dif_max"]))
     top = filas[:maximo]
-    # ademas: las de referencia implicita mas estable (otra referencia, misma suma)
-    estables = sorted((f for f in filas if f["Variación de la ref. entre líneas"] is not None),
-                      key=lambda f: f["Variación de la ref. entre líneas"])[:3]
-    propia = [f for f in filas if f["Es la del contrato"]][:1]
-    for f in estables + propia:
-        if f not in top:
-            top.append(f)
+    propia = [f for f in filas if f["Son los del contrato"]][:1]
+    if propia and propia[0] not in top:
+        top.append(propia[0])
     return top
+
+
+TOL_CUADRE = 0.05      # EUR por linea para dar una combinacion por cuadrada
+TOL_REF = 0.01         # EUR/MWh de variacion para dar una referencia por constante
+
+
+def conclusion_componentes(filas, contrato):
+    """(nivel, texto) que resume la comprobacion de componentes.
+    nivel: 'ok' | 'aviso' | 'error'."""
+    if not filas:
+        return None
+    propia = next((f for f in filas if f["Son los del contrato"]), None)
+    suma_c = " + ".join(contrato.componentes_pfm)
+    nombre_ref = "Referencia de SSAA" if contrato.mecanismo == "techo" else "referencia superior"
+    ref_c = contrato.techo if contrato.mecanismo == "techo" else contrato.ref_superior
+    if not contrato.componentes_pfm_contrato:
+        cuadra = next((f for f in filas if f["_cuadra"]), None)
+        if cuadra:
+            return "ok", ("El contrato no especifica la suma: lo facturado cuadra sumando %s, "
+                          "con la %s del contrato (%s €/MWh)."
+                          % (cuadra["Componentes sumados"], nombre_ref, _f(ref_c, 3)))
+        estable = next((f for f in filas if f["_estable"]), None)
+        if estable:
+            return "error", ("El contrato no especifica la suma. Lo facturado se explica sumando "
+                             "%s con una %s de %s €/MWh, pero el contrato fija %s €/MWh. Con "
+                             "esa suma y la referencia del contrato corresponden %s € y se han "
+                             "facturado %s € (diferencia %s €)."
+                             % (estable["Componentes sumados"], nombre_ref,
+                                _f(estable["Ref. que haría cuadrar lo facturado €/MWh"], 4),
+                                _f(ref_c, 3),
+                                _f(estable["Recalculado con las ref. del contrato €"], 2),
+                                _f(estable["Facturado €"], 2), _f(estable["Diferencia €"], 2)))
+        return "error", ("El contrato no especifica la suma y ninguna combinación de términos "
+                         "del PFMHORAS_COM, con una referencia constante, explica lo facturado. "
+                         "Revisa el consumo de cada mes, las pérdidas, el Ap y la liquidación.")
+    if propia and propia["_cuadra"]:
+        return "ok", ("Lo facturado cuadra con lo que dice el contrato: %s y %s de %s €/MWh."
+                      % (suma_c, nombre_ref, _f(ref_c, 3)))
+    cuadra = next((f for f in filas if f["_cuadra"]), None)
+    if cuadra:
+        return "aviso", ("Lo facturado cuadra con las referencias del contrato, pero sumando "
+                         "%s (el contrato: %s)." % (cuadra["Componentes sumados"], suma_c))
+    if propia and propia["_estable"]:
+        return "error", ("Los componentes son los del contrato (%s), pero la comercializadora ha "
+                         "aplicado una %s de %s €/MWh en lugar de %s €/MWh. Con la del contrato "
+                         "corresponden %s € y se han facturado %s € (diferencia %s €)."
+                         % (suma_c, nombre_ref, _f(propia["Ref. que haría cuadrar lo facturado €/MWh"], 4),
+                            _f(ref_c, 3), _f(propia["Recalculado con las ref. del contrato €"], 2),
+                            _f(propia["Facturado €"], 2), _f(propia["Diferencia €"], 2)))
+    estable = next((f for f in filas if f["_estable"]), None)
+    if estable:
+        return "error", ("Ni los componentes ni la referencia coinciden con el contrato: lo "
+                         "facturado se explica sumando %s con una %s de %s €/MWh (el contrato: "
+                         "%s y %s €/MWh)." % (estable["Componentes sumados"], nombre_ref,
+                                              _f(estable["Ref. que haría cuadrar lo facturado €/MWh"], 4),
+                                              suma_c, _f(ref_c, 3)))
+    return "error", ("Ninguna combinación de términos del PFMHORAS_COM, con una referencia "
+                     "constante, explica lo facturado. Revisa el consumo de cada mes, las "
+                     "pérdidas, el Ap y la liquidación.")
+
+
+def tabla_componentes(filas):
+    """Filas sin los campos internos, para mostrar."""
+    return [{k: v for k, v in f.items() if not k.startswith("_")} for f in filas]
 
 
 # ------------------------------------------------------------ formulas y pasos

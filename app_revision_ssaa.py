@@ -554,21 +554,14 @@ if ss.get("resultados"):
         if comp:
             c0 = validos[0][1].contrato
             st.markdown("**Comprobación de componentes del PFMHORAS_COM**")
-            exactas = [f for f in comp if f["Dif. máx. por línea €"] <= 0.05]
-            fijas = [f for f in comp if f["Variación de la ref. entre líneas"] is not None
-                     and f["Variación de la ref. entre líneas"] < 0.01]
-            if exactas:
-                st.success("Lo facturado cuadra sumando: **%s**." % exactas[0]["Componentes sumados"])
-            elif fijas:
-                st.warning("Ninguna combinación cuadra con las referencias del contrato. Lo "
-                           "facturado sí cuadra sumando **%s** con una referencia de **%s €/MWh**: "
-                           "parece que la comercializadora ha aplicado otra referencia."
-                           % (fijas[0]["Componentes sumados"],
-                              motor._f(fijas[0]["Ref. implícita €/MWh"], 4)))
+            concl = motor.conclusion_componentes(comp, c0)
+            if concl:
+                {"ok": st.success, "aviso": st.warning, "error": st.error}[concl[0]](concl[1])
             if not c0.componentes_pfm_contrato:
                 st.caption("El contrato no especifica la suma: el veredicto de arriba usa "
                            "%s." % " + ".join(c0.componentes_pfm))
-            st.dataframe(pd.DataFrame(comp), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(motor.tabla_componentes(comp)), hide_index=True,
+                         use_container_width=True)
 
     for i, (l, r, diag) in enumerate(validos, 1):
         with st.expander("%d. %s — :%s[%s]" % (i, l["Concepto"], colores.get(r.veredicto, "gray"),
