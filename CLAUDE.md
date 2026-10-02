@@ -26,12 +26,30 @@ así los días de cambio de hora no necesitan zona horaria.
 | `app_revision_ssaa.py` | Interfaz Streamlit: `streamlit run app_revision_ssaa.py` → localhost:8501 |
 | `ssaa_motor.py` | Cálculo: `Contrato` (índice, agregación, mecanismo, pérdidas, factor), `revisar()`, `diagnostico()` |
 | `ssaa_datos_esios.py` | Lectura de los Excel de ESIOS a series |
-| `curva_consumo.py` | Lectura de curvas CSV/XLSX/XLS (horaria o QH). `ClienteGemweb` pendiente |
+| `curva_consumo.py` | Lectura de curvas CSV/XLSX/XLS (horaria o QH) y reparto de los días de cambio de hora |
+| `gemweb.py` | API de Gemweb (adaptado de `estudio_potencia_cuartohorario/potencia/gemweb.py`): CUPS → id, curva cuartohoraria |
 | `lectores_factura/` | `base.py`: `DatosFactura` y lector genérico (PyMuPDF + regex). Un módulo por comercializadora, registrado en `LECTORES` |
 | `informe.py` | Excel de revisión y fichas de contrato (`contratos_ssaa.json`, clave CUPS) |
-| `tests/test_motor.py` | `python -m unittest discover tests`. Incluye las medias reales del Total SAH abr-jun 2026 |
+| `tests/` | `python -m unittest discover tests`. Incluye las medias reales del Total SAH abr-jun 2026 y una API de Gemweb simulada |
 | `facturas_ejemplo/` | Muestras para construir los lectores |
 | `revisiones_ssaa/` | Informes guardados `AAAA-MM_CUPS_nºfactura.xlsx` |
+
+## Gemweb
+
+`https://api.gemweb.es`, XML. Fechas con la hora de FIN del cuarto y siempre 96 cuartos
+por día: en marzo lo de las 02:xx se suma a la hora 3 de ESIOS y en octubre se reparte a
+medias entre las horas 3 y 4 (`curva_consumo.curva_reloj_a_esios`).
+
+Credenciales, nunca en el repositorio, por este orden: variables `GEMWEB_CLIENT_ID` /
+`GEMWEB_CLIENT_SECRET`; `%APPDATA%\ValidadorSSAA\gemweb.json` (guardadas desde la app,
+cifradas con DPAPI); `%APPDATA%\EstudioPotencia\gemweb.json`;
+`..\API_Gemweb\.streamlit\secrets.toml`.
+
+## GitHub
+
+`origin` = github.com/iyadazig/validador_SSAA_facturas. Se sube cada commit. **Nunca**
+datos de clientes (facturas, curvas, CUPS reales, condiciones de contrato, informes) ni
+credenciales: están en `.gitignore`. Las pruebas usan CUPS ficticios y bandas genéricas.
 
 ## Mecanismos soportados
 
@@ -45,6 +63,5 @@ Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si
 
 - Lectores específicos por comercializadora, con las facturas de `facturas_ejemplo/`
   (hoy solo el genérico; todo lo leído es editable en la app).
-- API de Gemweb: falta la documentación. Credencial en `GEMWEB_TOKEN` o `gemweb_token.txt`.
 - El 30/09/2026 del Excel de componentes (avance A2) trae valores imposibles (Total SSAA
   ~588 €/MWh, RT3 ~21.645): el motor lo avisa como anómalo.

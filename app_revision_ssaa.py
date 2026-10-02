@@ -17,6 +17,7 @@ import streamlit as st
 
 import config
 import curva_consumo
+import gemweb
 import informe
 import ssaa_datos_esios as esios
 import ssaa_motor as motor
@@ -50,6 +51,33 @@ with st.sidebar:
                "Si falta un periodo, actualízalo con los scripts de Descarga_datos_ESIOS:")
     st.code("python descarga_PVPC_diario_excel.py AAAA-MM-DD AAAA-MM-DD\n"
             "python descarga_componentes_precio_excel.py", language="bat")
+
+    st.header("Gemweb")
+    cred, origen_cred = gemweb.cargar_credenciales()
+    if cred:
+        st.success("Credenciales: %s" % origen_cred)
+    else:
+        st.warning("Sin credenciales de Gemweb.")
+    with st.expander("Configurar credenciales"):
+        st.caption("Se guardan cifradas en tu perfil de Windows (%APPDATA%\\ValidadorSSAA), "
+                   "nunca en la carpeta del programa ni en GitHub.")
+        nuevo_id = st.text_input("client_id")
+        nuevo_secreto = st.text_input("client_secret", type="password")
+        g1, g2 = st.columns(2)
+        if g1.button("Guardar", disabled=not (nuevo_id and nuevo_secreto)):
+            try:
+                gemweb.ClienteGemweb(nuevo_id, nuevo_secreto).comprobar()
+            except gemweb.GemwebError as e:
+                st.error(str(e))
+            else:
+                gemweb.guardar_credenciales(nuevo_id, nuevo_secreto)
+                st.rerun()
+        if g2.button("Probar conexión", disabled=not cred):
+            try:
+                gemweb.ClienteGemweb(*cred).comprobar()
+                st.success("Conexión correcta.")
+            except gemweb.GemwebError as e:
+                st.error(str(e))
 
 st.title("Revisión de servicios de ajuste (SSAA) en facturas")
 
@@ -208,8 +236,32 @@ if origen == "Subir fichero":
             if len(curva.avisos) > 10:
                 st.warning("… y %d avisos más." % (len(curva.avisos) - 10))
 elif origen == "Gemweb (API)":
-    st.info("Integración con Gemweb pendiente de la documentación de su API. "
-            "Mientras tanto, exporta la curva desde Gemweb y súbela como fichero.")
+    g_ini, g_fin = ss.get("f_inicio"), ss.get("f_fin")
+    clave_g = (cups, g_ini, g_fin)
+    if not (cups and g_ini and g_fin):
+        st.info("Rellena el CUPS y el periodo de la factura para descargar la curva.")
+    elif not gemweb.cargar_credenciales()[0]:
+        st.warning("Configura las credenciales de Gemweb en la barra lateral.")
+    elif st.button("Descargar curva de Gemweb"):
+        barra = st.progress(0.0, "Conectando con Gemweb…")
+        try:
+            cliente = gemweb.ClienteGemweb.desde_configuracion()
+            c_g, sum_g = cliente.curva(cups, g_ini, g_fin, lambda n, t, a, b: barra.progress(
+                n / t, "Descargando %s – %s (%d/%d)" % (a.strftime("%d/%m/%Y"),
+                                                       b.strftime("%d/%m/%Y"), n, t)))
+        except gemweb.GemwebError as e:
+            st.error(str(e))
+        else:
+            ss.curva_gemweb = (clave_g, c_g, sum_g)
+        barra.empty()
+    if ss.get("curva_gemweb") and ss.curva_gemweb[0] == clave_g:
+        _clave, curva, sum_g = ss.curva_gemweb
+        st.write("Suministro en Gemweb: tarifa **%s**, alta %s. Curva **cuartohoraria**, "
+                 "%d cuartos, %s a %s, total **%.1f kWh**."
+                 % (sum_g.get("tarifa") or "—", sum_g.get("data_alta") or "—",
+                    len(curva.valores), curva.inicio, curva.fin, curva.total_kwh))
+        for a in curva.avisos[:10]:
+            st.warning(a)
 
 # =================================================================== resultado
 st.header("4. Resultado")

@@ -19,13 +19,3 @@ TOLERANCIA_PCT = 0.5
 # Un SSAA horario por encima de esto se marca como sospechoso (dato de avance roto).
 UMBRAL_ANOMALO = 200.0
 
-
-def credencial(nombre_env, nombre_fichero):
-    """Lee una credencial de variable de entorno o de un fichero de esta carpeta."""
-    valor = os.environ.get(nombre_env, "").strip()
-    if valor:
-        return valor
-    ruta = CARPETA / nombre_fichero
-    if ruta.exists():
-        return ruta.read_text(encoding="utf-8").strip()
-    return ""

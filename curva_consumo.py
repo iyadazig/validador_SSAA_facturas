@@ -11,8 +11,8 @@ Las horas se numeran por orden dentro de cada dia, asi los dias de cambio de
 hora (23 o 25 registros) cuadran con ESIOS sin manejar zonas horarias. Si el
 fichero etiqueta cada registro con la hora FINAL (01:00 ... 24:00/00:00 del dia
 siguiente) se detecta y se corrige.
-
-GEMWEB: cliente pendiente de la documentacion de la API (ver ClienteGemweb).
+Si un dia de cambio de hora trae 24 h de reloj (96 cuartos), como Gemweb, se
+reparte con curva_reloj_a_esios(). La API de Gemweb esta en gemweb.py.
 """
 
 import csv
@@ -22,7 +22,6 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-import config
 
 PALABRAS_FECHA = ("fecha", "date", "timestamp")
 PALABRAS_HORA = ("hora", "hour", "periodo", "time")
@@ -269,8 +268,19 @@ def leer_curva(datos, nombre, columnas=None):
     resolucion = "qh" if tamanos[len(tamanos) // 2] > 30 else "h"
 
     valores = {}
+    nominal = 96 if resolucion == "qh" else 24
+    paso_min = 15 if resolucion == "qh" else 60
     for f, regs in por_dia.items():
         regs.sort(key=lambda r: (r[0], r[1]))
+        if f in dias_cambio_hora(f.year) and len(regs) == nominal:
+            # dia de cambio de hora normalizado a 24 h de reloj: se reparte por hora real
+            reloj = [(f, (r[0].hour * 60 + r[0].minute) if isinstance(r[0], dt.datetime)
+                      else (pos - 1) * paso_min, r[2]) for pos, r in enumerate(regs, 1)]
+            parcial, av = curva_reloj_a_esios(reloj, resolucion)
+            for k, v in parcial.items():
+                valores[k] = valores.get(k, 0.0) + v
+            avisos.extend(av)
+            continue
         for pos, (_t, _n, kwh) in enumerate(regs, 1):
             if resolucion == "qh":
                 clave = (f, (pos - 1) // 4 + 1, (pos - 1) % 4 + 1)
@@ -287,23 +297,51 @@ def leer_curva(datos, nombre, columnas=None):
                  avisos=avisos, origen=nombre)
 
 
-# ------------------------------------------------------------------- Gemweb
-class ClienteGemweb:
-    """Cliente de la API de Gemweb.
+# ------------------------------------------------------------ cambio de hora
+def _ultimo_domingo(anio, mes):
+    d = dt.date(anio + (mes == 12), mes % 12 + 1, 1) - dt.timedelta(days=1)
+    return d - dt.timedelta(days=(d.weekday() + 1) % 7)
 
-    PENDIENTE: falta la documentacion de la API (URL base, autenticacion y
-    endpoint de curvas). Las credenciales se leen de GEMWEB_TOKEN o de
-    gemweb_token.txt en esta carpeta, igual que el token de ESIOS.
+
+def dias_cambio_hora(anio):
+    """{dia de marzo (23 h), dia de octubre (25 h)} en Espana peninsular."""
+    return {_ultimo_domingo(anio, 3), _ultimo_domingo(anio, 10)}
+
+
+def curva_reloj_a_esios(registros, resolucion):
+    """[(fecha, minuto de inicio en hora de reloj, kWh)] -> ({clave ESIOS: kWh}, avisos).
+
+    Para curvas que traen siempre 24 h de reloj (Gemweb da 96 cuartos/dia):
+      marzo   ESIOS hora 1-2 = 00-02, 3-23 = 03-24. Lo que venga en las 02:xx
+              (hora que no existe) se suma a la hora 3.
+      octubre ESIOS hora 1-2 = 00-02, 3 y 4 = las dos 02-03, 5-25 = 03-24.
+              Lo de las 02:xx se reparte a medias entre las horas 3 y 4.
     """
-
-    def __init__(self):
-        self.token = config.credencial("GEMWEB_TOKEN", "gemweb_token.txt")
-
-    @property
-    def configurado(self):
-        return False    # se activara al implementar curva()
-
-    def curva(self, cups, inicio, fin):
-        raise NotImplementedError(
-            "Integración con Gemweb pendiente de la documentación de su API. "
-            "Mientras tanto, exporta la curva de Gemweb y súbela como fichero.")
+    out, avisos = {}, []
+    inexistente = defaultdict(float)
+    repetida = defaultdict(float)
+    for f, minuto, kwh in registros:
+        h0, q = minuto // 60, (minuto % 60) // 15 + 1
+        marzo, octubre = sorted(dias_cambio_hora(f.year))
+        if f == marzo and h0 >= 2:
+            horas = [(3 if h0 == 2 else h0, 1.0)]
+            if h0 == 2:
+                inexistente[f] += kwh
+        elif f == octubre and h0 >= 2:
+            horas = [(3, 0.5), (4, 0.5)] if h0 == 2 else [(h0 + 2, 1.0)]
+            if h0 == 2:
+                repetida[f] += kwh
+        else:
+            horas = [(h0 + 1, 1.0)]
+        for h, frac in horas:
+            k = (f, h, q) if resolucion == "qh" else (f, h)
+            out[k] = out.get(k, 0.0) + kwh * frac
+    for f, e in inexistente.items():
+        if e:
+            avisos.append("%s (cambio a horario de verano): %.3f kWh en las 02:00-03:00, "
+                          "hora que no existe; sumados a la hora siguiente." % (f, e))
+    for f, e in repetida.items():
+        avisos.append("%s (cambio a horario de invierno): la curva trae una sola hora "
+                      "02:00-03:00 (%.3f kWh); se reparte a medias entre las dos horas "
+                      "de ESIOS." % (f, e))
+    return out, avisos
