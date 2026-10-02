@@ -445,7 +445,7 @@ def comprobar_componentes(contrato, grupos, curva=None, maximo=8):
     for n in range(1, len(todos) + 1):
         for comb in itertools.combinations(todos, n):
             var = Contrato.desde_dict(dict(contrato.a_dict(), componentes_pfm=list(comb)))
-            imps, facts, refs = [], [], []
+            imps, facts, refs, pesos = [], [], [], []
             try:
                 for tramos, fact in grupos:
                     rs = [revisar(var, ini, fin, kwh, None, curva) for ini, fin, kwh in tramos]
@@ -456,6 +456,7 @@ def comprobar_componentes(contrato, grupos, curva=None, maximo=8):
                         r = rs[0]
                         k = (1 + r.perd_aplicada / 100) * var.apuntamiento * var.factor
                         refs.append(r.indice_aplicado - fact / r.energia_mwh / k)
+                        pesos.append(r.energia_mwh)
             except ErrorRevision:
                 continue
             filas.append({
@@ -464,7 +465,10 @@ def comprobar_componentes(contrato, grupos, curva=None, maximo=8):
                 "Facturado €": round(sum(facts), 2),
                 "Dif. €": round(sum(facts) - sum(imps), 2),
                 "Dif. máx. por línea €": round(max(abs(f - i) for f, i in zip(facts, imps)), 2),
-                "Ref. implícita €/MWh": round(sum(refs) / len(refs), 4) if refs else None,
+                # media ponderada por MWh: en lineas de poco consumo el redondeo al
+                # centimo del importe mueve mucho la referencia
+                "Ref. implícita €/MWh": round(sum(a * b for a, b in zip(refs, pesos)) / sum(pesos), 4)
+                if refs else None,
                 "Variación de la ref. entre líneas": round(max(refs) - min(refs), 4)
                 if len(refs) > 1 else None,
                 "Es la del contrato": set(comb) == set(contrato.componentes_pfm),
@@ -513,7 +517,7 @@ def formula_clausula(c):
     """Lineas de texto con las formulas de la clausula."""
     ind = NOMBRE_INDICE[c.indice]
     if c.indice == "pfm_ssaa":
-        ind = "SSAAh = %s del PFMHORAS_COM, €/MWh (%s)" % (
+        ind = "%s del PFMHORAS_COM, €/MWh (%s)" % (
             " + ".join(c.componentes_pfm),
             "suma indicada en el contrato" if c.componentes_pfm_contrato
             else "el contrato no especifica la suma; ver comprobación de componentes")

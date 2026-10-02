@@ -555,7 +555,7 @@ if ss.get("resultados"):
             st.markdown("**Comprobación de componentes del PFMHORAS_COM**")
             exactas = [f for f in comp if f["Dif. máx. por línea €"] <= 0.05]
             fijas = [f for f in comp if f["Variación de la ref. entre líneas"] is not None
-                     and f["Variación de la ref. entre líneas"] < 0.001]
+                     and f["Variación de la ref. entre líneas"] < 0.01]
             if exactas:
                 st.success("Lo facturado cuadra sumando: **%s**." % exactas[0]["Componentes sumados"])
             elif fijas:
