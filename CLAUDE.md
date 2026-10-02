@@ -7,6 +7,27 @@ de ESIOS y dice si lo facturado es correcto.
 **Coste cero**: todo corre en local. Nada de Streamlit Cloud, APIs de IA ni servicios de
 pago. La factura y la curva no salen del PC.
 
+## Uso en equipo (servidor)
+
+Pensado para 9 compañeros en la oficina y por VPN: la app corre en un servidor
+(`python lanzador.py --servidor`, puerto 8501, cortafuegos limitado a oficina + VPN) y se
+usa desde el navegador. Instalación: `servidor/GUIA_SERVIDOR.md` y
+`servidor/instalar_servidor.ps1` (cortafuegos, arranque automático, descargas de ESIOS y
+copia diaria de la base de datos).
+
+- `almacen.py`: SQLite `revisor_ssaa.db` en `config.CARPETA_DATOS` (variable
+  `SSAA_CARPETA_DATOS`), modo WAL y escrituras con `BEGIN IMMEDIATE` para varios usuarios a
+  la vez. Tablas: usuarios (PBKDF2-SHA256 con sal, bloqueo 15 min tras 5 fallos, siempre
+  queda un admin), contratos + contratos_historial (quién y cuándo), revisiones (cada
+  «Revisar SSAA» con su informe Excel). La primera vez importa `contratos_ssaa.json`.
+  Copias: `python almacen.py --copia CARPETA`.
+- `paginas.py`: inicio de sesión (la primera vez crea el administrador), cambio de
+  contraseña obligatorio con la provisional, Historial de revisiones, Fichas de contrato
+  (con sus cambios) y Usuarios (solo administradores: altas con contraseña provisional,
+  restablecer, desactivar, admin).
+- Las credenciales de Gemweb solo las ve y cambia un administrador.
+- La base de datos y sus copias tienen datos de clientes: no van a git (`*.db`).
+
 ## Ejecutable
 
 `python construir_exe.py` genera **«Revisor SSAA.exe»** en esta carpeta (PyInstaller, un solo

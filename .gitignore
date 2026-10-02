@@ -15,6 +15,11 @@ facturas_ejemplo/
 revisiones_ssaa/
 datos/
 contratos_ssaa.json
+*.db
+copias_seguridad/
+*.db-wal
+*.db-shm
+*.db.bak
 *.json.tmp
 *.pdf
 *.xlsx

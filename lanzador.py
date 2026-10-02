@@ -7,6 +7,11 @@ navegador. Si ya estaba abierta, solo vuelve a abrir el navegador.
 Se cierra con el boton "Cerrar la aplicacion" de la barra lateral.
 
 Tambien se puede probar sin compilar:   python lanzador.py
+
+MODO SERVIDOR (para todo el equipo; ver servidor/GUIA_SERVIDOR.md):
+    python lanzador.py --servidor [--puerto 8501]
+escucha en la red (el cortafuegos de Windows limita quien entra: oficina y VPN), no abre
+navegador y no muestra el boton de cerrar.
 """
 
 import os
@@ -80,11 +85,25 @@ def autoprueba():
     (destino / "autoprueba_resultado.txt").write_text("\n".join(lineas), encoding="utf-8")
 
 
+def _argumento(nombre, defecto):
+    if nombre in sys.argv:
+        i = sys.argv.index(nombre)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return defecto
+
+
 def main():
+    global PUERTO, URL
     if "--autoprueba" in sys.argv:
         autoprueba()
         return
-    if en_marcha():
+    servidor = "--servidor" in sys.argv
+    if servidor:
+        PUERTO = int(_argumento("--puerto", 8501))
+        URL = "http://localhost:%d" % PUERTO
+        os.environ["SSAA_MODO_SERVIDOR"] = "1"
+    elif en_marcha():
         webbrowser.open(URL)
         return
     recursos = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -96,7 +115,8 @@ def main():
     from streamlit.web import bootstrap
     opciones = {
         "server.port": PUERTO,
-        "server.address": "localhost",        # solo este equipo, no la red
+        # solo este equipo; en modo servidor, toda la red (lo limita el cortafuegos)
+        "server.address": "0.0.0.0" if servidor else "localhost",
         "server.headless": True,
         "server.fileWatcherType": "none",
         "global.developmentMode": False,
@@ -109,8 +129,13 @@ def main():
         "theme.textColor": "#1E1E1E",
         "theme.font": "sans serif",
     }
+    for clave in ("cert", "key"):                     # HTTPS opcional (crear_certificado.py)
+        ruta = os.environ.get("SSAA_SSL_%s" % clave.upper())
+        if ruta:
+            opciones["server.sslCertFile" if clave == "cert" else "server.sslKeyFile"] = ruta
     bootstrap.load_config_options(flag_options=opciones)
-    threading.Thread(target=abrir_navegador_cuando_este_lista, daemon=True).start()
+    if not servidor:
+        threading.Thread(target=abrir_navegador_cuando_este_lista, daemon=True).start()
     bootstrap.run(str(recursos / "app_revision_ssaa.py"), False, [], opciones)
 
 

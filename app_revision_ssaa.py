@@ -15,6 +15,7 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
+import almacen
 import config
 import curva_consumo
 import estilo
@@ -22,6 +23,7 @@ import gemweb
 import graficos
 import informe
 import ssaa_datos_esios as esios
+import paginas
 import ssaa_motor as motor
 from lectores_factura import leer_factura
 
@@ -30,6 +32,9 @@ st.set_page_config(page_title="Revisión de SSAA · GE&PE",
                    layout="wide", menu_items={})
 estilo.aplicar()
 ss = st.session_state
+usuario = paginas.acceso()          # inicio de sesion (detiene la pagina si no hay)
+
+SECCIONES = ["Revisar factura", "Historial de revisiones", "Fichas de contrato"] +     (["Usuarios"] if usuario["admin"] else [])
 
 
 def opciones(dic, clave):
@@ -45,6 +50,9 @@ def fijar(prefijo, valores):
 
 # ================================================================ barra lateral
 with st.sidebar:
+    paginas.barra_usuario()
+    seccion = st.radio("Sección", SECCIONES, label_visibility="collapsed")
+    st.divider()
     st.header("Configuración")
     st.caption("Datos ESIOS en:")
     st.code(str(config.CARPETA_ESIOS), language=None)
@@ -57,7 +65,7 @@ with st.sidebar:
     st.code("python descarga_PVPC_diario_excel.py AAAA-MM-DD AAAA-MM-DD\n"
             "python descarga_componentes_precio_excel.py", language="bat")
 
-    if config.EJECUTABLE:
+    if config.EJECUTABLE and not config.MODO_SERVIDOR:
         st.header("Aplicación")
         st.caption("Las fichas de contrato se guardan en %s" % config.FICHERO_CONTRATOS)
         if st.button("Cerrar la aplicación", use_container_width=True):
@@ -72,26 +80,38 @@ with st.sidebar:
         st.success("Credenciales: %s" % origen_cred)
     else:
         st.warning("Sin credenciales de Gemweb.")
-    with st.expander("Configurar credenciales"):
-        st.caption("Se guardan cifradas en tu perfil de Windows (%APPDATA%\\ValidadorSSAA), "
-                   "nunca en la carpeta del programa ni en GitHub.")
-        nuevo_id = st.text_input("Identificador de cliente (client_id)")
-        nuevo_secreto = st.text_input("Clave secreta (client_secret)", type="password")
-        g1, g2 = st.columns(2)
-        if g1.button("Guardar", disabled=not (nuevo_id and nuevo_secreto)):
-            try:
-                gemweb.ClienteGemweb(nuevo_id, nuevo_secreto).comprobar()
-            except gemweb.GemwebError as e:
-                st.error(str(e))
-            else:
-                gemweb.guardar_credenciales(nuevo_id, nuevo_secreto)
-                st.rerun()
-        if g2.button("Probar conexión", disabled=not cred):
-            try:
-                gemweb.ClienteGemweb(*cred).comprobar()
-                st.success("Conexión correcta.")
-            except gemweb.GemwebError as e:
-                st.error(str(e))
+    # en el servidor las credenciales son comunes: solo las ve y cambia un administrador
+    if usuario["admin"]:
+        with st.expander("Configurar credenciales"):
+            st.caption("Se guardan cifradas en tu perfil de Windows (%APPDATA%\\ValidadorSSAA), "
+                       "nunca en la carpeta del programa ni en GitHub.")
+            nuevo_id = st.text_input("Identificador de cliente (client_id)")
+            nuevo_secreto = st.text_input("Clave secreta (client_secret)", type="password")
+            g1, g2 = st.columns(2)
+            if g1.button("Guardar", disabled=not (nuevo_id and nuevo_secreto)):
+                try:
+                    gemweb.ClienteGemweb(nuevo_id, nuevo_secreto).comprobar()
+                except gemweb.GemwebError as e:
+                    st.error(str(e))
+                else:
+                    gemweb.guardar_credenciales(nuevo_id, nuevo_secreto)
+                    st.rerun()
+            if g2.button("Probar conexión", disabled=not cred):
+                try:
+                    gemweb.ClienteGemweb(*cred).comprobar()
+                    st.success("Conexión correcta.")
+                except gemweb.GemwebError as e:
+                    st.error(str(e))
+
+
+if seccion != "Revisar factura":
+    estilo.cabecera("Revisión de servicios de ajuste en facturas",
+                    "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
+    {"Historial de revisiones": paginas.pagina_historial,
+     "Fichas de contrato": paginas.pagina_fichas,
+     "Usuarios": paginas.pagina_usuarios}[seccion]()
+    estilo.pie()
+    st.stop()
 
 estilo.cabecera("Revisión de servicios de ajuste en facturas",
                 "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
@@ -344,8 +364,10 @@ if st.button("Guardar ficha de contrato", disabled=not cups):
     if error:
         st.error(error)
     else:
-        informe.guardar_contrato(ficha)
-        st.success("Ficha guardada para %s: %s." % (cups, motor.MECANISMOS[ficha.mecanismo]))
+        if informe.guardar_contrato(ficha, usuario["usuario"]):
+            st.success("Ficha guardada para %s: %s." % (cups, motor.MECANISMOS[ficha.mecanismo]))
+        else:
+            st.info("La ficha ya estaba guardada con estas mismas condiciones.")
 
 if ss.c_mecanismo == "banda":
     st.caption("Banda: cargo = consumo × (SSAA − ref. sup.) × (1+perd) × factor si supera la "
@@ -532,6 +554,7 @@ if st.button("Revisar SSAA", type="primary", disabled=not lineas or bool(incompl
             contrato, [(tramos, lineas[n - 1]["Importe €"]) for n, tramos in grupos.items()],
             curva)
     ss.resultados = resultados
+    ss.pendiente_historial = True      # se registra al generar el informe, mas abajo
 
 
 def fila_resumen(l, r):
@@ -637,12 +660,22 @@ if ss.get("resultados"):
         xlsx = informe.generar_excel([(fila_resumen(l, r), r, d) for l, r, d in validos],
                                      datos_factura, totales(validos, validos[0][1].contrato),
                                      ss.get("componentes") or [])
-        b1, b2 = st.columns(2)
+        if ss.pop("pendiente_historial", False):
+            c0 = validos[0][1].contrato
+            ss.revision_id = almacen.guardar_revision(usuario["usuario"], {
+                "cups": cups, "comercializadora": ss.get("f_comercializadora"),
+                "factura": ss.get("f_numero"),
+                "emision": ss.get("f_emision").isoformat() if ss.get("f_emision") else None,
+                "periodo": "%s – %s" % (min(r.inicio for _l, r, _d in validos).strftime("%d/%m/%Y"),
+                                        max(r.fin for _l, r, _d in validos).strftime("%d/%m/%Y")),
+                "clausula": c0.plantilla or motor.MECANISMOS.get(c0.mecanismo)},
+                [fila_resumen(l, r) for l, r, _d in validos], xlsx)
+        b1, b2 = st.columns([1, 2])
         nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", ss.get("f_numero") or "")
         b1.download_button("Descargar informe Excel", xlsx, nombre,
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        if b2.button("Guardar en la carpeta de revisiones"):
-            ruta = informe.guardar_informe(xlsx, validos[0][1], cups, ss.get("f_numero"))
-            st.success("Guardado en %s" % ruta)
+        if ss.get("revision_id"):
+            b2.caption("Revisión nº %d guardada en el historial (sección «Historial de "
+                       "revisiones»), con su informe." % ss.revision_id)
 
 estilo.pie()

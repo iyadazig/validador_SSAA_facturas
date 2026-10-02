@@ -27,21 +27,17 @@ COLORES = {"CORRECTO": "C6EFCE", "FACTURADO DE MÁS": "FFC7CE", "FACTURADO DE ME
 
 # ------------------------------------------------------------------ contratos
 def cargar_contratos():
-    if not config.FICHERO_CONTRATOS.exists():
-        return {}
-    with open(config.FICHERO_CONTRATOS, encoding="utf-8") as f:
-        return {k: Contrato.desde_dict(v) for k, v in json.load(f).items()}
+    """{cups: Contrato} de la base de datos compartida (almacen.py)."""
+    import almacen
+    return {k: Contrato.desde_dict(v) for k, v in almacen.cargar_contratos().items()}
 
 
-def guardar_contrato(contrato):
+def guardar_contrato(contrato, usuario=None):
+    """Guarda la ficha y su version en el historial. False si no habia cambios."""
+    import almacen
     if not contrato.cups:
         raise ValueError("El contrato necesita CUPS para guardarse")
-    todos = {k: v.a_dict() for k, v in cargar_contratos().items()}
-    todos[contrato.cups] = contrato.a_dict()
-    tmp = str(config.FICHERO_CONTRATOS) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(todos, f, ensure_ascii=False, indent=2, sort_keys=True)
-    os.replace(tmp, config.FICHERO_CONTRATOS)
+    return almacen.guardar_contrato(contrato.cups, contrato.a_dict(), usuario)
 
 
 # -------------------------------------------------------------------- informe

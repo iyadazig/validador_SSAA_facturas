@@ -20,9 +20,16 @@ else:
 CARPETA_ESIOS = Path(os.environ.get(
     "SSAA_CARPETA_ESIOS", CARPETA.parent / "Descarga_datos_ESIOS"))
 
+# Base de datos compartida (usuarios, fichas, historial). En el servidor se puede llevar a
+# otra carpeta con SSAA_CARPETA_DATOS.
+CARPETA_DATOS = Path(os.environ.get("SSAA_CARPETA_DATOS", CARPETA))
+# fichero de fichas de la version anterior: se importa a la base de datos la primera vez
 FICHERO_CONTRATOS = CARPETA / "contratos_ssaa.json"
 CARPETA_REVISIONES = CARPETA / "revisiones_ssaa"
 CARPETA_EJEMPLOS = CARPETA / "facturas_ejemplo"
+
+# Servidor para todo el equipo (lanzador.py --servidor): sin boton de cerrar la app
+MODO_SERVIDOR = os.environ.get("SSAA_MODO_SERVIDOR") == "1"
 
 # Tolerancia por defecto para dar una factura por correcta (% sobre lo recalculado).
 TOLERANCIA_PCT = 0.5
