@@ -144,8 +144,13 @@ TRADUCCIONES = {
     "button to close the calendar.": "Pulsa la flecha abajo para abrir el calendario y elegir una "
     "fecha. Pulsa Escape para cerrarlo.",
     "Select a date.": "Elige una fecha.", "Running...": "Calculando…",
+    "Save as SVG": "Guardar como SVG", "Save as PNG": "Guardar como PNG",
+    "Click to view actions": "Opciones de la gráfica",
     "Mo": "Lu", "Tu": "Ma", "We": "Mi", "Th": "Ju", "Fr": "Vi", "Sa": "Sá", "Su": "Do",
 }
+# opciones del menu de las graficas que se ocultan: son de programador y "Open in Vega
+# Editor" enviaria los datos de la grafica (de clientes) a una web externa
+OCULTAR = ["View Source", "View Compiled Vega", "Open in Vega Editor"]
 MESES_EN = ["January", "February", "March", "April", "May", "June", "July", "August",
             "September", "October", "November", "December"]
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto",
@@ -158,12 +163,16 @@ def traducir():
     import json
     import streamlit.components.v1 as components
     components.html("""<script>
-    const T = %s, EN = %s, ES = %s;
+    const T = %s, EN = %s, ES = %s, OCULTAR = %s;
     const doc = window.parent.document;
     const reMes = new RegExp("^(" + EN.join("|") + ")( \\\\d{4})?$");
     function nodo(n) {
         const t = n.nodeValue.trim();
         if (!t) return;
+        if (OCULTAR.includes(t) && n.parentElement) {
+            const e = n.parentElement.closest("a") || n.parentElement;
+            e.style.display = "none"; return;
+        }
         if (T[t] !== undefined) { n.nodeValue = n.nodeValue.replace(t, T[t]); return; }
         const m = t.match(reMes);
         if (m) n.nodeValue = n.nodeValue.replace(m[1], ES[EN.indexOf(m[1])]);
@@ -187,7 +196,7 @@ def traducir():
     window.parent.__gpTraductor.observe(doc.body, {childList: true, subtree: true,
                                                    characterData: true});
     </script>""" % (json.dumps(TRADUCCIONES, ensure_ascii=False), json.dumps(MESES_EN),
-                    json.dumps(MESES_ES, ensure_ascii=False)), height=0)
+                    json.dumps(MESES_ES, ensure_ascii=False), json.dumps(OCULTAR)), height=0)
 
 
 def _b64(ruta):

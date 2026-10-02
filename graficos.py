@@ -28,6 +28,13 @@ NOMBRE_SERIE = {"sah_pvpc": "Total SAH",
                 "fijo": "Precio fijo"}
 
 
+# menu de la grafica (vega-embed): solo exportar, y en espanol
+OPCIONES_MENU = {"embedOptions": {
+    "actions": {"export": True, "source": False, "compiled": False, "editor": False},
+    "i18n": {"SVG_ACTION": "Guardar como SVG", "PNG_ACTION": "Guardar como PNG",
+             "CLICK_TO_VIEW_ACTIONS": "Opciones de la gráfica"}}}
+
+
 def _num(v, d=2):
     return ("%.*f" % (d, v)).replace(".", ",")
 
@@ -114,7 +121,8 @@ def grafico_ssaa(r, alto=320):
     reglas = alt.Chart(lineas).mark_rule(strokeWidth=2).encode(
         y="Valor:Q", color=color, strokeDash=trazo,
         tooltip=[alt.Tooltip("Serie:N", title="Línea"), alt.Tooltip("Texto:N", title="Valor")])
-    return (curva + reglas + detector + guia + puntos).properties(height=alto).configure(
+    return (curva + reglas + detector + guia + puntos).properties(
+        height=alto, usermeta=OPCIONES_MENU).configure(
         font="Arial").configure_view(stroke=None)
 
 
@@ -133,4 +141,5 @@ def grafico_consumo(r, alto=170):
         color=alt.Color("Serie:N", scale=alt.Scale(range=[estilo.GRIS_CLARO]),
                         legend=alt.Legend(title=None, orient="bottom", labelFontSize=12)),
         tooltip=[alt.Tooltip("Fecha y hora:N"), alt.Tooltip("Texto:N", title="Consumo")]
-    ).properties(height=alto).configure(font="Arial").configure_view(stroke=None)
+    ).properties(height=alto, usermeta=OPCIONES_MENU).configure(font="Arial").configure_view(
+        stroke=None)
