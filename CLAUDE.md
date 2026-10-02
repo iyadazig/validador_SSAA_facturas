@@ -82,8 +82,7 @@ de términos del fichero y da la referencia implícita que haría cuadrar cada l
 Pérdidas estándar 7 % AT (6.xTD) / 17 % BT, Ap 1,02, HL 1,015. Cada mes natural se calcula
 aparte (`periodo_calculo="mensual"`: una línea de varios meses se parte; consumo del mes de
 la curva o prorrateado por días) y se suma por trimestre natural.
-La factura de muestra cuadra al céntimo con R + P + D y una referencia superior de
-16 €/MWh: pendiente de confirmar con el contrato del CUPS.
+Los resultados de las facturas de muestra no se apuntan aquí (datos de clientes).
 Ojo: el Excel de ESIOS sustituye la pestaña PFMHORAS_COM C2 por la C5 cuando sale; si el
 contrato fija la C2, la app avisa de la diferencia de liquidación.
 
