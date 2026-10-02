@@ -73,6 +73,20 @@ Regularizaciones sobre un SSAA ya incluido en el precio (las de Endesa grandes c
   × (1+perd) × 1,015 solo si se supera. Sin abono.
 - **banda**: cargo por encima de la ref. superior y abono por debajo de la inferior.
 
+Naturgy — regularización trimestral (banda): Σ meses n [Dif. SSAA n × (1+pérdidas) ×
+Ap × Consumo n × HL]. SSAA reales = media aritmética del PFMHORAS_COM (C2_PrecioFinal)
+de cada mes; la ficha dice si el contrato **indica la suma de componentes** (por defecto
+Restricciones + Procesos OS + Desvíos + REER + Importe participación servicios) o **no
+la especifica**. En ambos casos `comprobar_componentes()` prueba todas las combinaciones
+de términos del fichero y da la referencia implícita que haría cuadrar cada línea.
+Pérdidas estándar 7 % AT (6.xTD) / 17 % BT, Ap 1,02, HL 1,015. Cada mes natural se calcula
+aparte (`periodo_calculo="mensual"`: una línea de varios meses se parte; consumo del mes de
+la curva o prorrateado por días) y se suma por trimestre natural.
+La factura de muestra cuadra al céntimo con R + P + D y una referencia superior de
+16 €/MWh: pendiente de confirmar con el contrato del CUPS.
+Ojo: el Excel de ESIOS sustituye la pestaña PFMHORAS_COM C2 por la C5 cuando sale; si el
+contrato fija la C2, la app avisa de la diferencia de liquidación.
+
 Además: indexado (+prima), indexado con precio máximo, con mínimo y máximo, y fijo.
 Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si curva e
 índice son QH). `importe = MWh × precio × (1+perd/100) × factor`.

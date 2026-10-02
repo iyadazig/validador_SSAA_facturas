@@ -221,6 +221,8 @@ def aplicar_plantilla():
     if nombre in motor.PLANTILLAS:
         fijar("c_", motor.PLANTILLAS[nombre])
         ss.c_plantilla = nombre
+        if nombre in motor.PLANTILLAS_PERD_POR_TENSION:
+            ss.c_perd_fijo = motor.perd_estandar(ss.get("c_tarifa") or ss.get("f_tarifa"))
     else:
         ss.c_plantilla = ""
 
@@ -250,6 +252,25 @@ with k1:
             st.error("No se pueden leer las columnas de componentes: %s" % e)
         ss.c_componentes = [c for c in ss.get("c_componentes", []) if c in cols]
         st.multiselect("Componentes que suman", cols, key="c_componentes")
+    if ss.c_indice == "pfm_ssaa":
+        st.selectbox("¿El contrato indica qué componentes se suman?", [True, False],
+                     key="c_componentes_pfm_contrato",
+                     format_func=lambda v: "Sí, el contrato indica la suma" if v
+                     else "No, el contrato no lo especifica")
+        ss.c_componentes_pfm = [c for c in ss.get("c_componentes_pfm", [])
+                                if c in esios.COLS_PFM_TODOS]
+        if not ss.c_componentes_pfm_contrato:
+            ss.c_componentes_pfm = list(esios.COLS_PFM_NATURGY)
+        st.multiselect("Componentes del PFMHORAS_COM que se suman", list(esios.COLS_PFM_TODOS),
+                       key="c_componentes_pfm",
+                       disabled=not ss.c_componentes_pfm_contrato,
+                       help="Por defecto, la suma que indica Naturgy en algunos contratos: "
+                            "Restricciones + Procesos OS + Desvíos + REER + Importe "
+                            "participación servicios.")
+        if not ss.c_componentes_pfm_contrato:
+            st.caption("Se calcula con la suma habitual de Naturgy y, al revisar, se comprueban "
+                       "todas las combinaciones de términos del fichero para ver cuál "
+                       "reproduce lo facturado.")
     opciones(motor.AGREGACIONES, ("c_agregacion", "Cómo se agrega el índice"))
 with k2:
     mec = ss.c_mecanismo
@@ -266,7 +287,9 @@ with k2:
         st.number_input("Precio fijo €/MWh", format="%.3f", key="c_precio_fijo")
     if mec in ("indexado", "indexado_techo", "indexado_suelo_techo"):
         st.number_input("Prima / fee €/MWh", format="%.3f", key="c_prima")
-    st.number_input("Factor final (1,015 = impuesto municipal)", format="%.4f",
+    st.number_input("Apuntamiento Ap (1 si el contrato no lo tiene)", format="%.4f",
+                    step=0.01, key="c_apuntamiento")
+    st.number_input("Factor final (1,015 = impuesto municipal / HL)", format="%.4f",
                     step=0.001, key="c_factor")
 with k3:
     opciones(motor.PERDIDAS, ("c_perdidas", "Pérdidas"))
@@ -276,6 +299,11 @@ with k3:
         opciones(motor.PERD_AGREGACIONES, ("c_perd_agregacion", "Cómo se agregan las pérdidas"))
     st.selectbox("Tarifa para las pérdidas", motor.TARIFAS, key="c_tarifa")
     st.selectbox("Zona", ["Península", "Baleares", "Canarias"], key="c_zona")
+    st.selectbox("Liquidación de ESIOS que fija el contrato", motor.LIQUIDACIONES,
+                 key="c_liquidacion_requerida",
+                 format_func=lambda v: v or "No la fija (la última publicada)")
+    opciones(motor.PERIODOS_CALCULO, ("c_periodo_calculo", "Periodo de cálculo"))
+    opciones(motor.REGULARIZACIONES_PERIODO, ("c_regularizacion", "Regularización"))
 
 
 def contrato_actual():
@@ -322,7 +350,12 @@ if guardados:
             "Techo €/MWh": c.techo if c.mecanismo == "techo" else None,
             "Ref. superior €/MWh": c.ref_superior if c.mecanismo == "banda" else None,
             "Ref. inferior €/MWh": c.ref_inferior if c.mecanismo == "banda" else None,
-            "Pérdidas": motor.PERDIDAS.get(c.perdidas), "Factor": c.factor}
+            "Índice": motor.INDICES.get(c.indice, c.indice),
+            "Componentes": (" + ".join(c.componentes_pfm) +
+                            ("" if c.componentes_pfm_contrato else " (no especificado)"))
+            if c.indice == "pfm_ssaa" else None,
+            "Pérdidas": motor.PERDIDAS.get(c.perdidas), "Ap": c.apuntamiento,
+            "Factor": c.factor, "Regularización": c.regularizacion}
             for c in guardados.values()]), hide_index=True, use_container_width=True)
 
 # ======================================================================= curva
@@ -391,14 +424,79 @@ incompletas = [l["Concepto"] for l in lineas if not (l["Inicio"] and l["Fin"])]
 if incompletas:
     st.info("Faltan fechas en: %s" % ", ".join(str(c) for c in incompletas))
 
+def partir_por_meses(l, contrato):
+    """Si el contrato calcula por mes natural, parte la linea en sus meses. El importe
+    facturado queda en la linea original (se compara en los totales)."""
+    meses = list(esios.meses_entre(l["Inicio"], l["Fin"]))
+    if contrato.periodo_calculo != "mensual" or len(meses) <= 1:
+        return [l]
+    dias_total = (l["Fin"] - l["Inicio"]).days + 1
+    out = []
+    for m in meses:
+        fin_mes = (dt.date(m.year + (m.month == 12), m.month % 12 + 1, 1) - dt.timedelta(days=1))
+        a, b = max(l["Inicio"], m), min(l["Fin"], fin_mes)
+        dias = (b - a).days + 1
+        parte = dict(l, Inicio=a, Fin=b, Concepto="%s — %s" % (l["Concepto"], m.strftime("%m/%Y")),
+                     **{"Importe €": None, "Precio €/kWh": None})
+        if curva is not None:
+            parte["kWh"] = None           # consumo real del mes, de la curva
+        elif l["kWh"] is not None:
+            parte["kWh"] = l["kWh"] * dias / dias_total
+            parte["avisos"] = ["Consumo del mes prorrateado por días a partir de la línea "
+                               "(%d de %d días). Con la curva se usaría el consumo real del mes."
+                               % (dias, dias_total)]
+        out.append(parte)
+    return out
+
+
+def trimestre(fecha):
+    return "%dT %d" % ((fecha.month - 1) // 3 + 1, fecha.year)
+
+
+def totales(resultados, contrato):
+    """Totales por linea de factura (si se partio por meses) y por trimestre."""
+    grupos = []
+    por_linea = {}
+    for l, r, _d in resultados:
+        por_linea.setdefault(l["linea"], []).append((l, r))
+    partidas = {k: v for k, v in por_linea.items() if len(v) > 1}
+    for k, v in partidas.items():
+        fact = next((x["Importe €"] for x in lineas[k - 1:k]), None)
+        grupos.append(("Línea %d: %s" % (k, lineas[k - 1]["Concepto"]), v, fact))
+    if contrato.regularizacion == "trimestral":
+        por_tri = {}
+        for k, v in por_linea.items():
+            por_tri.setdefault(trimestre(v[0][0]["Inicio"]), []).append(k)
+        for tri, ks in por_tri.items():
+            v = [x for k in ks for x in por_linea[k]]
+            facts = [lineas[k - 1]["Importe €"] for k in ks]
+            fact = sum(f for f in facts if f is not None) if any(f is not None for f in facts) else None
+            grupos.append(("Regularización trimestral %s" % tri, v, fact))
+    filas = []
+    for nombre, v, fact in grupos:
+        rec = sum(r.importe for _l, r in v)
+        dif, pct, ver = motor.veredicto(fact, rec, tolerancia)
+        filas.append({"Total": nombre, "Meses / líneas": len(v),
+                      "MWh": round(sum(r.energia_mwh for _l, r in v), 3),
+                      "Facturado €": fact, "Recalculado €": round(rec, 2),
+                      "Diferencia €": round(dif, 2) if dif is not None else None,
+                      "Diferencia %": round(pct, 2) if pct is not None else None,
+                      "Veredicto": ver})
+    return filas
+
+
 if st.button("Revisar SSAA", type="primary", disabled=not lineas or bool(incompletas)):
     contrato = contrato_actual()
     resultados = []
+    partes = []
+    for n_l, l in enumerate(lineas, 1):
+        kwh = l["kWh"]
+        if kwh is None and (l["Inicio"], l["Fin"]) == (ss.get("f_inicio"), ss.get("f_fin")):
+            kwh = ss.get("f_consumo")
+        partes.extend(partir_por_meses(dict(l, kWh=kwh, linea=n_l), contrato))
     with st.spinner("Leyendo ESIOS y calculando…"):
-        for l in lineas:
+        for l in partes:
             kwh = l["kWh"]
-            if kwh is None and (l["Inicio"], l["Fin"]) == (ss.get("f_inicio"), ss.get("f_fin")):
-                kwh = ss.get("f_consumo")
             try:
                 r = motor.revisar(contrato, l["Inicio"], l["Fin"], kwh, l["Importe €"],
                                   curva, tolerancia)
@@ -407,7 +505,15 @@ if st.button("Revisar SSAA", type="primary", disabled=not lineas or bool(incompl
             except motor.ErrorRevision as e:
                 resultados.append((l, None, str(e)))
             else:
+                for a_ in l.get("avisos", []):
+                    r.avisos.insert(0, a_)
                 resultados.append((l, r, diag))
+        grupos = {}
+        for l in partes:
+            grupos.setdefault(l["linea"], []).append((l["Inicio"], l["Fin"], l["kWh"]))
+        ss.componentes = motor.comprobar_componentes(
+            contrato, [(tramos, lineas[n - 1]["Importe €"]) for n, tramos in grupos.items()],
+            curva)
     ss.resultados = resultados
 
 
@@ -439,6 +545,29 @@ if ss.get("resultados"):
         m[1].metric("Total recalculado", "%.2f €" % tot_r)
         m[2].metric("Diferencia (facturado − recalculado)", "%+.2f €" % (tot_f - tot_r))
         st.dataframe(pd.DataFrame(resumen), hide_index=True, use_container_width=True)
+        filas_tot = totales(validos, validos[0][1].contrato)
+        if filas_tot:
+            st.markdown("**Totales**")
+            st.dataframe(pd.DataFrame(filas_tot), hide_index=True, use_container_width=True)
+        comp = ss.get("componentes") or []
+        if comp:
+            c0 = validos[0][1].contrato
+            st.markdown("**Comprobación de componentes del PFMHORAS_COM**")
+            exactas = [f for f in comp if f["Dif. máx. por línea €"] <= 0.05]
+            fijas = [f for f in comp if f["Variación de la ref. entre líneas"] is not None
+                     and f["Variación de la ref. entre líneas"] < 0.001]
+            if exactas:
+                st.success("Lo facturado cuadra sumando: **%s**." % exactas[0]["Componentes sumados"])
+            elif fijas:
+                st.warning("Ninguna combinación cuadra con las referencias del contrato. Lo "
+                           "facturado sí cuadra sumando **%s** con una referencia de **%s €/MWh**: "
+                           "parece que la comercializadora ha aplicado otra referencia."
+                           % (fijas[0]["Componentes sumados"],
+                              motor._f(fijas[0]["Ref. implícita €/MWh"], 4)))
+            if not c0.componentes_pfm_contrato:
+                st.caption("El contrato no especifica la suma: el veredicto de arriba usa "
+                           "%s." % " + ".join(c0.componentes_pfm))
+            st.dataframe(pd.DataFrame(comp), hide_index=True, use_container_width=True)
 
     for i, (l, r, diag) in enumerate(validos, 1):
         with st.expander("%d. %s — :%s[%s]" % (i, l["Concepto"], colores.get(r.veredicto, "gray"),
@@ -486,7 +615,8 @@ if ss.get("resultados"):
                          "Energía facturada kWh": ss.get("f_consumo"),
                          "Curva": curva.origen if curva is not None else "—"}
         xlsx = informe.generar_excel([(fila_resumen(l, r), r, d) for l, r, d in validos],
-                                     datos_factura)
+                                     datos_factura, totales(validos, validos[0][1].contrato),
+                                     ss.get("componentes") or [])
         b1, b2 = st.columns(2)
         nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", ss.get("f_numero") or "")
         b1.download_button("Descargar informe Excel", xlsx, nombre,

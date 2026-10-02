@@ -7,6 +7,9 @@ clausula del contrato y de los datos de ESIOS, y lo compara con lo facturado.
 
 Clausula (Contrato):
   indice       sah_pvpc   Total SAH del PVPC_DETALLE (horario, EUR/MWh bc)
+               pfm_ssaa   suma de terminos del PFMHORAS_COM (C2_PrecioFinal; horario):
+                          componentes_pfm; componentes_pfm_contrato dice si la suma
+                          viene en el contrato o hay que averiguarla
                ssaa_esios TOTAL SSAA del Excel de componentes (cuartohorario)
                componentes suma de columnas elegidas del Excel de componentes
                fijo       precio fijo de contrato
@@ -22,9 +25,12 @@ Clausula (Contrato):
                fijo         precio = precio_fijo
   perdidas     ninguna | liquicomun_h | liquicomun_qh | pvpc | fijo
   perd_agregacion  como se agrega PERD cuando la agregacion no es horaria
-  factor       multiplicador final (1,015 = impuesto municipal)
+  apuntamiento multiplicador Ap (Naturgy: 1,02); 1 si el contrato no lo tiene
+  factor       multiplicador final (1,015 = impuesto municipal / Hacienda Local)
+  periodo_calculo   linea (la linea entera) | mensual (cada mes natural aparte)
+  regularizacion    linea | trimestral (se suma por trimestre natural)
 
-importe = energia MWh x precio x (1 + perd/100) x factor
+importe = energia MWh x precio x (1 + perd/100) x Ap x factor
 """
 
 import datetime as dt
@@ -35,6 +41,7 @@ import config
 import ssaa_datos_esios as esios
 
 INDICES = {"sah_pvpc": "Total SAH PVPC (horario, bc)",
+           "pfm_ssaa": "PFMHORAS_COM (C2_PrecioFinal): suma de componentes (horario)",
            "ssaa_esios": "Total SSAA ESIOS (cuartohorario)",
            "componentes": "Suma de componentes ESIOS",
            "fijo": "Precio fijo de contrato"}
@@ -57,6 +64,21 @@ PERDIDAS = {"ninguna": "Sin pérdidas",
 PERD_AGREGACIONES = {"media_aritmetica": "Media aritmética",
                      "media_ponderada": "Media ponderada por consumo"}
 TARIFAS = ["2.0TD", "3.0TD", "3.0TDVE", "6.1TD", "6.1TDVE", "6.2TD", "6.3TD", "6.4TD"]
+PERIODOS_CALCULO = {"linea": "Toda la línea de la factura de una vez",
+                    "mensual": "Cada mes natural por separado"}
+REGULARIZACIONES_PERIODO = {"linea": "Por línea de factura",
+                            "trimestral": "Trimestral (suma de los meses del trimestre natural)"}
+LIQUIDACIONES = ["", "C2", "C3", "C4", "C5", "C6", "C7"]
+
+
+def es_alta_tension(tarifa):
+    """6.xTD es alta tension; 2.0TD y 3.0TD, baja."""
+    return str(tarifa).startswith("6.")
+
+
+def perd_estandar(tarifa):
+    """Perdidas estandar de Naturgy: 7 % AT y 17 % BT."""
+    return 7.0 if es_alta_tension(tarifa) else 17.0
 
 # Clausulas tipo: fijan como se calcula; las referencias de cada CUPS se rellenan aparte.
 PLANTILLAS = {
@@ -68,7 +90,15 @@ PLANTILLAS = {
         comercializadora="Endesa", mecanismo="banda", indice="sah_pvpc",
         agregacion="media_aritmetica", perdidas="liquicomun_h",
         perd_agregacion="media_aritmetica", factor=1.015, prima=0.0),
+    "Naturgy — regularización trimestral (banda)": dict(
+        comercializadora="Naturgy", mecanismo="banda", indice="pfm_ssaa",
+        agregacion="media_aritmetica", perdidas="fijo", factor=1.015, apuntamiento=1.02,
+        liquidacion_requerida="C2", periodo_calculo="mensual", regularizacion="trimestral",
+        componentes_pfm=list(esios.COLS_PFM_NATURGY), componentes_pfm_contrato=False,
+        prima=0.0),
 }
+# en estas plantillas el % de perdidas fijo depende de la tension de la tarifa
+PLANTILLAS_PERD_POR_TENSION = ("Naturgy — regularización trimestral (banda)",)
 TEXTO_PLANTILLAS = {
     "Endesa grandes cuentas — techo":
         "Cobertura hasta la Referencia de SSAA. Si la media aritmética del Total SAH "
@@ -79,6 +109,12 @@ TEXTO_PLANTILLAS = {
         "consumo × (SSAA reales − ref. sup.) × (1 + perd) × 1,015; si < ref. inferior: abono = "
         "consumo × (ref. inf. − SSAA reales) × (1 + perd) × 1,015. Perd = media aritmética de "
         "las pérdidas horarias.",
+    "Naturgy — regularización trimestral (banda)":
+        "Regularización trimestral = Σ meses n del trimestre [Diferencia SSAA n × (1 + pérdidas) × "
+        "Ap × Consumo n × HL]. SSAA reales = media aritmética de los SSAA horarios del "
+        "PFMHORAS_COM (C2_PrecioFinal) de cada mes; indica abajo si el contrato dice qué "
+        "componentes se suman. Pérdidas estándar 7 % AT / 17 % BT, Ap = 1,02, HL = 1,015. "
+        "Consumo n = consumo del mes natural.",
 }
 
 
@@ -92,6 +128,8 @@ class Contrato:
     zona: str = "Península"
     indice: str = "sah_pvpc"
     componentes: list = field(default_factory=list)
+    componentes_pfm: list = field(default_factory=lambda: list(esios.COLS_PFM_NATURGY))
+    componentes_pfm_contrato: bool = False
     agregacion: str = "media_aritmetica"
     mecanismo: str = "techo"
     precio_fijo: float = 0.0
@@ -103,7 +141,11 @@ class Contrato:
     perdidas: str = "ninguna"
     perd_fijo: float = 0.0
     perd_agregacion: str = "media_aritmetica"
+    apuntamiento: float = 1.0
     factor: float = 1.0
+    liquidacion_requerida: str = ""
+    periodo_calculo: str = "linea"
+    regularizacion: str = "linea"
 
     @classmethod
     def desde_dict(cls, d):
@@ -181,6 +223,10 @@ def _indice(c, ini, fin, resolucion):
     if c.indice == "sah_pvpc":
         serie = {k: v["sah"] for k, v in esios.pvpc_horario(ini, fin).items()}
         return serie, {"PVPC_DETALLE": "date_type=datos (definitivo)"}
+    if c.indice == "pfm_ssaa":
+        if not c.componentes_pfm:
+            raise ErrorRevision("No se han elegido componentes del PFMHORAS_COM")
+        return esios.pfmhoras(ini, fin, c.componentes_pfm)
     if c.indice in ("ssaa_esios", "componentes"):
         cols = [esios.COL_TOTAL_SSAA] if c.indice == "ssaa_esios" else c.componentes
         if not cols:
@@ -288,6 +334,11 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
     for mes, liq in liquidaciones.items():
         if isinstance(liq, str) and liq.startswith("A"):
             avisos.append("%s: dato de avance (%s), aún no liquidado por REE." % (mes, liq))
+        elif c.liquidacion_requerida and isinstance(liq, str) and \
+                not liq.startswith(c.liquidacion_requerida):
+            avisos.append("%s: el contrato pide la liquidación %s y en el Excel está %s. "
+                          "Puede haber diferencias con lo que calculó la comercializadora."
+                          % (mes, c.liquidacion_requerida, liq))
 
     claves = sorted(indice)
     cv = _curva_en(curva, resolucion)
@@ -328,14 +379,14 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
         importe = 0.0
         for k, e, v, p in zip(claves, consumos, valores, perds):
             precio = aplicar_mecanismo(c, v)
-            imp = e / 1000.0 * precio * (1 + p / 100.0) * c.factor
+            imp = e / 1000.0 * precio * (1 + p / 100.0) * c.apuntamiento * c.factor
             importe += imp
             detalle.append((k, e, v, p, precio, imp))
         energia = (e_curva or 0.0) / 1000.0
         indice_aplicado = indice_pond if indice_pond is not None else indice_medio
         perd_aplicada = _ponderada(list(zip(consumos, perds))) or 0.0
         precio_aplicado = importe / energia / (1 + perd_aplicada / 100) / c.factor \
-            if energia else 0.0
+            / c.apuntamiento if energia else 0.0
     else:
         energia = (consumo_kwh if consumo_kwh else (e_curva or 0.0)) / 1000.0
         if not energia:
@@ -348,7 +399,8 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
         else:
             perd_aplicada = _media(perds)
         precio_aplicado = aplicar_mecanismo(c, indice_aplicado)
-        importe = energia * precio_aplicado * (1 + perd_aplicada / 100.0) * c.factor
+        importe = energia * precio_aplicado * (1 + perd_aplicada / 100.0) * c.apuntamiento \
+            * c.factor
         detalle = [(k, e, v, p, None, None) for k, e, v, p in zip(claves, consumos, valores, perds)]
 
     r = Resultado(contrato=c, inicio=inicio, fin=fin, energia_mwh=energia,
@@ -360,27 +412,78 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
     return r
 
 
-def comparar(r, facturado, tolerancia_pct=config.TOLERANCIA_PCT):
+def veredicto(facturado, recalculado, tolerancia_pct=config.TOLERANCIA_PCT):
+    """(diferencia, diferencia %, veredicto) de un importe facturado frente al recalculado."""
     if facturado is None:
-        r.veredicto = "Sin importe facturado para comparar"
-        return r
-    r.facturado = facturado
+        return None, None, "Sin importe facturado para comparar"
+    dif = facturado - recalculado
+    pct = dif / abs(recalculado) * 100 if recalculado else None
+    if abs(dif) < 0.01 or (pct is not None and abs(pct) <= tolerancia_pct):
+        return dif, pct, "CORRECTO"
+    return dif, pct, "FACTURADO DE MÁS" if dif > 0 else "FACTURADO DE MENOS"
+
+
+def comparar(r, facturado, tolerancia_pct=config.TOLERANCIA_PCT):
     r.tolerancia_pct = tolerancia_pct
-    r.diferencia = facturado - r.importe
-    base = abs(r.importe) if r.importe else None
-    r.diferencia_pct = r.diferencia / base * 100 if base else None
-    if abs(r.diferencia) < 0.01 or (r.diferencia_pct is not None
-                                    and abs(r.diferencia_pct) <= tolerancia_pct):
-        r.veredicto = "CORRECTO"
-    elif r.diferencia > 0:
-        r.veredicto = "FACTURADO DE MÁS"
-    else:
-        r.veredicto = "FACTURADO DE MENOS"
+    if facturado is not None:
+        r.facturado = facturado
+    r.diferencia, r.diferencia_pct, r.veredicto = veredicto(facturado, r.importe, tolerancia_pct)
     return r
+
+
+def comprobar_componentes(contrato, grupos, curva=None, maximo=8):
+    """Para el indice PFMHORAS_COM: recalcula con cada combinacion de terminos del
+    fichero y ordena por cercania a lo facturado.
+
+    grupos: [([(inicio, fin, kWh), ...], facturado)], una entrada por linea de factura
+    (varios tramos si la linea se calcula mes a mes)."""
+    grupos = [(t, f) for t, f in grupos if f is not None and t]
+    if contrato.indice != "pfm_ssaa" or not grupos:
+        return []
+    filas = []
+    todos = esios.COLS_PFM_TODOS
+    for n in range(1, len(todos) + 1):
+        for comb in itertools.combinations(todos, n):
+            var = Contrato.desde_dict(dict(contrato.a_dict(), componentes_pfm=list(comb)))
+            imps, facts, refs = [], [], []
+            try:
+                for tramos, fact in grupos:
+                    rs = [revisar(var, ini, fin, kwh, None, curva) for ini, fin, kwh in tramos]
+                    imps.append(sum(r.importe for r in rs))
+                    facts.append(fact)
+                    # referencia que haria cuadrar la linea (un solo tramo con cargo)
+                    if len(rs) == 1 and fact > 0 and rs[0].energia_mwh and                             var.mecanismo in REGULARIZACIONES:
+                        r = rs[0]
+                        k = (1 + r.perd_aplicada / 100) * var.apuntamiento * var.factor
+                        refs.append(r.indice_aplicado - fact / r.energia_mwh / k)
+            except ErrorRevision:
+                continue
+            filas.append({
+                "Componentes sumados": " + ".join(comb),
+                "Recalculado €": round(sum(imps), 2),
+                "Facturado €": round(sum(facts), 2),
+                "Dif. €": round(sum(facts) - sum(imps), 2),
+                "Dif. máx. por línea €": round(max(abs(f - i) for f, i in zip(facts, imps)), 2),
+                "Ref. implícita €/MWh": round(sum(refs) / len(refs), 4) if refs else None,
+                "Variación de la ref. entre líneas": round(max(refs) - min(refs), 4)
+                if len(refs) > 1 else None,
+                "Es la del contrato": set(comb) == set(contrato.componentes_pfm),
+            })
+    filas.sort(key=lambda f: f["Dif. máx. por línea €"])
+    top = filas[:maximo]
+    # ademas: las de referencia implicita mas estable (otra referencia, misma suma)
+    estables = sorted((f for f in filas if f["Variación de la ref. entre líneas"] is not None),
+                      key=lambda f: f["Variación de la ref. entre líneas"])[:3]
+    propia = [f for f in filas if f["Es la del contrato"]][:1]
+    for f in estables + propia:
+        if f not in top:
+            top.append(f)
+    return top
 
 
 # ------------------------------------------------------------ formulas y pasos
 NOMBRE_INDICE = {"sah_pvpc": "SAHh (Total SAH horario del PVPC_DETALLE_DD, €/MWh bc)",
+                 "pfm_ssaa": "SSAAh (Restricciones + Procesos OS + Desvíos del PFMHORAS_COM, €/MWh)",
                  "ssaa_esios": "SSAAh (TOTAL SSAA de ESIOS; valor horario = media de sus 4 cuartos)",
                  "componentes": "SSAAh (suma de los componentes elegidos; horario = media de sus 4 cuartos)",
                  "fijo": "Precio fijo"}
@@ -409,9 +512,15 @@ def formula_mecanismo(c, x="SSAA reales"):
 def formula_clausula(c):
     """Lineas de texto con las formulas de la clausula."""
     ind = NOMBRE_INDICE[c.indice]
+    if c.indice == "pfm_ssaa":
+        ind = "SSAAh = %s del PFMHORAS_COM, €/MWh (%s)" % (
+            " + ".join(c.componentes_pfm),
+            "suma indicada en el contrato" if c.componentes_pfm_contrato
+            else "el contrato no especifica la suma; ver comprobación de componentes")
     out = []
     if c.agregacion == "horaria":
-        out.append("Importe = Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100) × Factor ]")
+        out.append("Importe = Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100)%s × Factor ]"
+                   % (" × Ap" if c.apuntamiento != 1 else ""))
         out.append("P(SSAAh): " + formula_mecanismo(c, "SSAAh"))
         out.append("Eh = consumo de la hora (o cuarto) en kWh, de la curva; " + ind)
     else:
@@ -421,8 +530,9 @@ def formula_clausula(c):
             out.append("SSAA reales = Σ SSAAh / N   (media aritmética de las N horas del periodo)")
         out.append("SSAAh = " + ind)
         out.append(formula_mecanismo(c))
-        out.append("Importe = Consumo real MWh × %s × (1 + perd/100) × Factor"
-                   % ("Diferencia" if c.mecanismo in REGULARIZACIONES else "Precio"))
+        out.append("Importe = Consumo real MWh × %s × (1 + perd/100)%s × Factor"
+                   % ("Diferencia" if c.mecanismo in REGULARIZACIONES else "Precio",
+                      " × Ap" if c.apuntamiento != 1 else ""))
     if c.perdidas in NOMBRE_PERD:
         nombre = NOMBRE_PERD[c.perdidas] % c.tarifa if "%s" in NOMBRE_PERD[c.perdidas] \
             else NOMBRE_PERD[c.perdidas]
@@ -436,8 +546,16 @@ def formula_clausula(c):
         out.append("perd = %s %% (coeficiente fijo de contrato)" % _f(c.perd_fijo, 4))
     else:
         out.append("perd = 0 (sin pérdidas)")
-    out.append("Factor = %s%s" % (_f(c.factor, 4), " (impuesto municipal 1,5 %)"
+    if c.apuntamiento != 1:
+        out.append("Ap = %s (apuntamiento estimado constante)" % _f(c.apuntamiento, 4))
+    out.append("Factor = %s%s" % (_f(c.factor, 4), " (impuesto municipal / Hacienda Local 1,5 %)"
                                   if abs(c.factor - 1.015) < 1e-9 else ""))
+    if c.periodo_calculo == "mensual":
+        out.append("Cada mes natural se calcula por separado con su consumo y sus SSAA reales")
+    if c.regularizacion == "trimestral":
+        out.append("Regularización trimestral = suma de los importes de los meses del trimestre")
+    if c.liquidacion_requerida:
+        out.append("Datos de ESIOS: liquidación %s" % c.liquidacion_requerida)
     return out
 
 
@@ -473,7 +591,7 @@ def pasos_calculo(r):
         paso("ssaa", "SSAA medio ponderado (informativo)", "Σ(Eh × SSAAh) / Σ Eh", "",
              r.indice_ponderado, "€/MWh")
         paso("importe", "Importe recalculado",
-             "Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100) × Factor ];  " +
+             "Σh [ Eh/1000 × P(SSAAh) × (1 + PERDh/100) × Ap × Factor ];  " +
              formula_mecanismo(c, "SSAAh"),
              "suma de la columna Importe de la hoja de detalle", r.importe, "€")
         paso("precio_ef", "Precio efectivo", "Importe / Consumo",
@@ -521,11 +639,14 @@ def pasos_calculo(r):
             sust = _f(c.precio_fijo, 3)
         paso("precio", "Diferencia sobre la referencia" if m in REGULARIZACIONES
              else "Precio de SSAA", formula_mecanismo(c), sust, r.precio_aplicado, "€/MWh")
-        precio_final = r.precio_aplicado * (1 + r.perd_aplicada / 100) * c.factor
-        paso("precio_final", "Precio final con pérdidas y factor",
-             "%s × (1 + perd/100) × Factor" % ("Diferencia" if m in REGULARIZACIONES else "Precio"),
-             "%s × (1 + %s/100) × %s" % (_f(r.precio_aplicado), _f(r.perd_aplicada, 4),
-                                         _f(c.factor, 4)), precio_final, "€/MWh")
+        precio_final = r.precio_aplicado * (1 + r.perd_aplicada / 100) * c.apuntamiento * c.factor
+        ap_f = " × Ap" if c.apuntamiento != 1 else ""
+        ap_s = " × %s" % _f(c.apuntamiento, 4) if c.apuntamiento != 1 else ""
+        paso("precio_final", "Precio final con pérdidas%s y factor" % (", Ap" if ap_f else ""),
+             "%s × (1 + perd/100)%s × Factor" % ("Diferencia" if m in REGULARIZACIONES
+                                                 else "Precio", ap_f),
+             "%s × (1 + %s/100)%s × %s" % (_f(r.precio_aplicado), _f(r.perd_aplicada, 4), ap_s,
+                                           _f(c.factor, 4)), precio_final, "€/MWh")
         paso("precio_kwh", "Precio final en €/kWh", "Precio final / 1000",
              "%s / 1000" % _f(precio_final), precio_final / 1000, "€/kWh")
         paso("mwh", "Consumo real", "Consumo kWh / 1000",

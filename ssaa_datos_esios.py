@@ -151,6 +151,34 @@ def componentes_qh(ini, fin, columnas=(COL_TOTAL_SSAA,)):
     return out, liquidaciones
 
 
+# ------------------------------------------------- PFMHORAS_COM (precio final)
+# Terminos de coste del PFMHORAS_COM ademas de los mercados diario e intradiario
+COLS_PFM_TODOS = ("Restricciones", "Procesos OS", "Desvíos", "Pagos capacidad", "REER",
+                  "Importe participación servicios")
+# Suma que Naturgy indica en algunos contratos como coste total de los SSAA
+COLS_PFM_NATURGY = ("Restricciones", "Procesos OS", "Desvíos", "REER",
+                    "Importe participación servicios")
+
+
+def pfmhoras(ini, fin, columnas=COLS_PFM_NATURGY):
+    """{(fecha, hora): suma de las columnas pedidas} del fichero PFMHORAS_COM
+    (C2_PrecioFinal, o C5 cuando sale) y {mes: liquidacion}."""
+    out, liquidaciones = {}, {}
+    for m in meses_entre(ini, fin):
+        filas = _filas(_ruta_componentes(m.year), "PFMHORAS_COM " + nombre_mes(m))
+        if not filas:
+            continue
+        cab = filas[1]
+        idx = [_buscar_col(cab, c + " ") for c in columnas]
+        for r in filas[2:]:
+            f = _fecha(r[0])
+            if f is None or not (ini <= f <= fin) or r[1] is None:
+                continue
+            out[(f, int(r[1]))] = sum(float(r[i] or 0) for i in idx)
+            liquidaciones["PFMHORAS_COM " + nombre_mes(m)] = r[-1]
+    return out, liquidaciones
+
+
 # ------------------------------------------------------------------- perdidas
 def perdidas_horarias(ini, fin, tarifa, zona="Península"):
     """{(fecha, hora): PERD %} del liquicomun (pestanas 'Perdidas mmm-aa')."""

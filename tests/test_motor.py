@@ -140,6 +140,47 @@ class CurvaFichero(unittest.TestCase):
 
 @unittest.skipUnless((config.CARPETA_ESIOS / "2026_Historico_PVPC_horario.xlsx").exists(),
                      "sin Excel de ESIOS")
+@unittest.skipUnless((config.CARPETA_ESIOS / "2026_Historico_componentes_ESIOS.xlsx").exists(),
+                     "sin Excel de ESIOS")
+class PFMHorasReales(unittest.TestCase):
+    """Clausula trimestral con datos publicos del PFMHORAS_COM y una banda generica."""
+    MESES = [(dt.date(2026, 4, 1), dt.date(2026, 4, 30), 100000.0),
+             (dt.date(2026, 5, 1), dt.date(2026, 5, 31), 120000.0)]
+
+    def contrato(self, **kw):
+        n = "Naturgy — regularización trimestral (banda)"
+        base = dict(motor.PLANTILLAS[n], plantilla=n, ref_superior=18.0, ref_inferior=15.0,
+                    perd_fijo=motor.perd_estandar("6.1TD"), tarifa="6.1TD")
+        base.update(kw)
+        return motor.Contrato.desde_dict(base)
+
+    def test_formula(self):
+        c = self.contrato(componentes_pfm=["Restricciones", "Procesos OS", "Desvíos"])
+        ini, fin, kwh = self.MESES[0]
+        r = motor.revisar(c, ini, fin, kwh, None)
+        self.assertEqual(len(r.detalle), 720)
+        esperado = kwh / 1000 * (r.indice_medio - 18.0) * 1.07 * 1.02 * 1.015
+        self.assertAlmostEqual(r.importe, esperado)
+
+    def test_comprobacion_encuentra_la_suma_y_la_referencia(self):
+        # factura simulada con R+P+D y una referencia de 17 en vez de 18
+        verdad = self.contrato(componentes_pfm=["Restricciones", "Procesos OS", "Desvíos"],
+                               ref_superior=17.0)
+        grupos = [([(a, b, k)], round(motor.revisar(verdad, a, b, k, None).importe, 2))
+                  for a, b, k in self.MESES]
+        filas = motor.comprobar_componentes(self.contrato(), grupos)
+        rpd = [f for f in filas
+               if f["Componentes sumados"] == "Restricciones + Procesos OS + Desvíos"]
+        self.assertEqual(len(rpd), 1)
+        self.assertAlmostEqual(rpd[0]["Ref. implícita €/MWh"], 17.0, places=3)
+        self.assertLess(rpd[0]["Variación de la ref. entre líneas"], 0.001)
+        self.assertTrue(any(f["Es la del contrato"] for f in filas))
+
+    def test_perdidas_estandar(self):
+        self.assertEqual(motor.perd_estandar("6.1TD"), 7.0)
+        self.assertEqual(motor.perd_estandar("3.0TD"), 17.0)
+
+
 class MediasSAHReales(unittest.TestCase):
     """Medias del Total SAH publicadas (dato publico de ESIOS) con una banda 15-20."""
 

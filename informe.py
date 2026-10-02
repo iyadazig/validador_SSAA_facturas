@@ -13,7 +13,8 @@ from openpyxl.utils import get_column_letter
 
 import config
 from ssaa_motor import (Contrato, INDICES, AGREGACIONES, MECANISMOS, PERDIDAS,
-                        PERD_AGREGACIONES, formula_clausula, pasos_calculo)
+                        PERD_AGREGACIONES, PERIODOS_CALCULO, REGULARIZACIONES_PERIODO,
+                        formula_clausula, pasos_calculo)
 
 NEGRITA = Font(bold=True)
 CABECERA = PatternFill("solid", fgColor="DDEBF7")
@@ -60,6 +61,10 @@ def descripcion_contrato(c):
              ("Tarifa", c.tarifa), ("Índice", INDICES[c.indice])]
     if c.indice == "componentes":
         filas.append(("Componentes", "; ".join(c.componentes)))
+    if c.indice == "pfm_ssaa":
+        filas.append(("Componentes del PFMHORAS_COM", " + ".join(c.componentes_pfm)))
+        filas.append(("¿Los indica el contrato?", "Sí" if c.componentes_pfm_contrato
+                      else "No especificado: se comprueba qué combinación cuadra"))
     filas += [("Agregación", AGREGACIONES[c.agregacion]),
               ("Mecanismo", MECANISMOS[c.mecanismo])]
     if c.mecanismo == "banda":
@@ -80,7 +85,14 @@ def descripcion_contrato(c):
         filas.append(("Coef. pérdidas %", c.perd_fijo))
     elif c.perdidas != "ninguna" and c.agregacion != "horaria":
         filas.append(("Agregación pérdidas", PERD_AGREGACIONES[c.perd_agregacion]))
+    if c.apuntamiento != 1:
+        filas.append(("Apuntamiento (Ap)", c.apuntamiento))
     filas.append(("Factor final", c.factor))
+    if c.liquidacion_requerida:
+        filas.append(("Liquidación de ESIOS del contrato", c.liquidacion_requerida))
+    filas.append(("Cálculo", PERIODOS_CALCULO.get(c.periodo_calculo, c.periodo_calculo)))
+    filas.append(("Regularización", REGULARIZACIONES_PERIODO.get(c.regularizacion,
+                                                                 c.regularizacion)))
     return filas
 
 
@@ -102,6 +114,7 @@ NOMBRES_PARAM = {"techo": "Referencia de SSAA (techo) €/MWh",
                  "techo_max": "Precio máximo €/MWh", "suelo": "Precio mínimo €/MWh",
                  "prima": "Prima €/MWh", "precio_fijo": "Precio fijo €/MWh",
                  "perd_fijo": "Coeficiente de pérdidas fijo %", "factor": "Factor final",
+                 "apuntamiento": "Apuntamiento (Ap)",
                  "consumo": "Consumo real kWh", "facturado": "Importe facturado €",
                  "tolerancia": "Tolerancia para dar por correcta %"}
 
@@ -125,6 +138,7 @@ def _parametros(r):
         out.append(("precio_fijo", c.precio_fijo))
     if c.perdidas == "fijo":
         out.append(("perd_fijo", c.perd_fijo))
+    out.append(("apuntamiento", c.apuntamiento))
     out.append(("factor", c.factor))
     if c.agregacion != "horaria":
         out.append(("consumo", r.energia_mwh * 1000))
@@ -175,8 +189,9 @@ def _hoja_detalle(wb, n, r, P):
         if horaria:
             x = "%s%d" % (L["x"], i)
             wd.cell(i, base + 4, "=" + _mecanismo_excel(c, x, P)).number_format = "0.000000"
-            wd.cell(i, base + 5, "=%s%d/1000*%s%d*(1+%s%d/100)*%s" % (
-                L["e"], i, L["pr"], i, L["p"], i, P["factor"])).number_format = "0.0000"
+            wd.cell(i, base + 5, "=%s%d/1000*%s%d*(1+%s%d/100)*%s*%s" % (
+                L["e"], i, L["pr"], i, L["p"], i, P["apuntamiento"], P["factor"])
+            ).number_format = "0.0000"
     ultima = len(r.detalle) + 1
     wd.freeze_panes = "A2"
     wd.column_dimensions[L["imp"]].width = 22
@@ -239,7 +254,8 @@ def _hoja_calculo(wb, n, resumen, r):
         if clave == "precio":
             return "=" + _mecanismo_excel(c, E["ssaa"], P)
         if clave == "precio_final":
-            return "=%s*(1+%s/100)*%s" % (E["precio"], E["perd"], P["factor"])
+            return "=%s*(1+%s/100)*%s*%s" % (E["precio"], E["perd"], P["apuntamiento"],
+                                             P["factor"])
         if clave == "precio_kwh":
             return "=%s/1000" % E["precio_final"]
         if clave == "mwh":
@@ -295,11 +311,28 @@ def _hoja_calculo(wb, n, resumen, r):
         ws.column_dimensions[col].width = ancho
 
 
-def generar_excel(lineas, factura):
+def _tabla_dicts(ws, fila, filas, veredicto="Veredicto"):
+    """Tabla de dicts a partir de `fila`; colorea la columna de veredicto."""
+    cab = list(filas[0].keys())
+    _cabecera(ws, cab, ancho=None, fila=fila)
+    for d in filas:
+        fila += 1
+        for i, k in enumerate(cab, 1):
+            ws.cell(fila, i, d[k])
+        if veredicto in d and d[veredicto] in COLORES:
+            celda = ws.cell(fila, cab.index(veredicto) + 1)
+            celda.fill = PatternFill("solid", fgColor=COLORES[d[veredicto]])
+            celda.font = NEGRITA
+    return fila + 2
+
+
+def generar_excel(lineas, factura, totales=None, componentes=None):
     """Excel de la revision en bytes.
 
-    lineas: [(resumen dict, Resultado, diagnostico)], una por linea de SSAA.
+    lineas: [(resumen dict, Resultado, diagnostico)], una por linea (o mes) de SSAA.
     factura: dict de campos de cabecera a mostrar.
+    totales: filas de totales por linea partida y por trimestre.
+    componentes: comprobacion de combinaciones del PFMHORAS_COM.
     """
     wb = Workbook()
     ws = wb.active
@@ -331,9 +364,12 @@ def generar_excel(lineas, factura):
         fila += 1
     tot_f = sum(r.facturado or 0 for _x, r, _d in lineas)
     tot_r = sum(r.importe for _x, r, _d in lineas)
-    _tabla(ws, fila + 1, [("Total facturado €", round(tot_f, 2)),
-                          ("Total recalculado €", round(tot_r, 2)),
-                          ("Diferencia € (facturado − recalculado)", round(tot_f - tot_r, 2))])
+    fila = _tabla(ws, fila + 1, [("Total facturado €", round(tot_f, 2)),
+                                 ("Total recalculado €", round(tot_r, 2)),
+                                 ("Diferencia € (facturado − recalculado)", round(tot_f - tot_r, 2))])
+    if totales:
+        fila = _titulo(ws, fila, "Totales (meses de una misma línea y regularización trimestral)")
+        fila = _tabla_dicts(ws, fila, totales)
     ws.column_dimensions["A"].width = 46
     ws.column_dimensions["B"].width = 26
     for col in "CDEFGHIJK":
@@ -341,6 +377,16 @@ def generar_excel(lineas, factura):
 
     for n, (resumen, r, _d) in enumerate(lineas, 1):
         _hoja_calculo(wb, n, resumen, r)
+
+    if componentes:
+        wc = wb.create_sheet("Componentes PFMHORAS")
+        wc.cell(1, 1, "Comprobación de qué términos del PFMHORAS_COM reproducen lo facturado "
+                      "(todas las líneas). «Ref. implícita» es la referencia que haría cuadrar "
+                      "cada línea; si no varía entre líneas, la comercializadora ha usado esa "
+                      "combinación con esa referencia.").font = NEGRITA
+        _tabla_dicts(wc, 3, componentes)
+        for i, ancho in enumerate((70, 14, 14, 12, 16, 16, 18, 12), 1):
+            wc.column_dimensions[get_column_letter(i)].width = ancho
 
     diags = [(n, d) for n, (_x, _r, d) in enumerate(lineas, 1) if d]
     if diags:
