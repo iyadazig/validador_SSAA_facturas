@@ -83,8 +83,9 @@ Pérdidas estándar 7 % AT (6.xTD) / 17 % BT, Ap 1,02, HL 1,015. Cada mes natura
 aparte (`periodo_calculo="mensual"`: una línea de varios meses se parte; consumo del mes de
 la curva o prorrateado por días) y se suma por trimestre natural.
 Los resultados de las facturas de muestra no se apuntan aquí (datos de clientes).
-Ojo: el Excel de ESIOS sustituye la pestaña PFMHORAS_COM C2 por la C5 cuando sale; si el
-contrato fija la C2, la app avisa de la diferencia de liquidación.
+El script de descarga guarda la C2 aparte en «PFMHORAS_COM C2 mmm-aa» (no se sustituye
+cuando sale la C5); si el contrato fija la C2 se lee esa pestaña, y si falta, la principal
+con aviso de la liquidación que tiene.
 
 Además: indexado (+prima), indexado con precio máximo, con mínimo y máximo, y fijo.
 Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si curva e

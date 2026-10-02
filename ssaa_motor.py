@@ -226,7 +226,7 @@ def _indice(c, ini, fin, resolucion):
     if c.indice == "pfm_ssaa":
         if not c.componentes_pfm:
             raise ErrorRevision("No se han elegido componentes del PFMHORAS_COM")
-        return esios.pfmhoras(ini, fin, c.componentes_pfm)
+        return esios.pfmhoras(ini, fin, c.componentes_pfm, c.liquidacion_requerida)
     if c.indice in ("ssaa_esios", "componentes"):
         cols = [esios.COL_TOTAL_SSAA] if c.indice == "ssaa_esios" else c.componentes
         if not cols:

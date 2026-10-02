@@ -160,12 +160,23 @@ COLS_PFM_NATURGY = ("Restricciones", "Procesos OS", "Desvíos", "REER",
                     "Importe participación servicios")
 
 
-def pfmhoras(ini, fin, columnas=COLS_PFM_NATURGY):
-    """{(fecha, hora): suma de las columnas pedidas} del fichero PFMHORAS_COM
-    (C2_PrecioFinal, o C5 cuando sale) y {mes: liquidacion}."""
+def pfmhoras(ini, fin, columnas=COLS_PFM_NATURGY, liquidacion=""):
+    """{(fecha, hora): suma de las columnas pedidas} del fichero PFMHORAS_COM y
+    {pestana: liquidacion}.
+
+    Sin `liquidacion`, la pestana "PFMHORAS_COM mmm-aa" (la mejor publicada: C5 o C2).
+    Con liquidacion="C2", la pestana "PFMHORAS_COM C2 mmm-aa", que el script de
+    descarga guarda aparte y no sustituye cuando sale la C5."""
     out, liquidaciones = {}, {}
     for m in meses_entre(ini, fin):
-        filas = _filas(_ruta_componentes(m.year), "PFMHORAS_COM " + nombre_mes(m))
+        hojas = ["PFMHORAS_COM " + nombre_mes(m)]
+        if liquidacion == "C2":
+            hojas.insert(0, "PFMHORAS_COM C2 " + nombre_mes(m))
+        filas, hoja = None, None
+        for hoja in hojas:
+            filas = _filas(_ruta_componentes(m.year), hoja)
+            if filas:
+                break
         if not filas:
             continue
         cab = filas[1]
@@ -175,7 +186,7 @@ def pfmhoras(ini, fin, columnas=COLS_PFM_NATURGY):
             if f is None or not (ini <= f <= fin) or r[1] is None:
                 continue
             out[(f, int(r[1]))] = sum(float(r[i] or 0) for i in idx)
-            liquidaciones["PFMHORAS_COM " + nombre_mes(m)] = r[-1]
+            liquidaciones[hoja] = r[-1]
     return out, liquidaciones
 
 
