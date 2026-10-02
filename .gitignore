@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+.claude/
+
+# datos de clientes: NUNCA subir facturas, curvas, contratos ni informes reales
+facturas_ejemplo/
+revisiones_ssaa/
+datos/
+contratos_ssaa.json
+*.json.tmp
+*.pdf
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.txt
+!requirements.txt
+
+# credenciales (Gemweb, ESIOS): NUNCA en git
+.streamlit/secrets.toml
+*.toml
+gemweb_token.txt
+esios_token.txt
+credenciales*
+*.key
+.env
