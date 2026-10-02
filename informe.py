@@ -54,7 +54,10 @@ def _titulo(ws, fila, texto):
 
 
 def descripcion_contrato(c):
-    filas = [("Tarifa", c.tarifa), ("Índice", INDICES[c.indice])]
+    filas = [("Comercializadora", c.comercializadora or "—"),
+             ("Cláusula tipo", c.plantilla or "personalizada"),
+             ("Descripción", c.descripcion or "—"),
+             ("Tarifa", c.tarifa), ("Índice", INDICES[c.indice])]
     if c.indice == "componentes":
         filas.append(("Componentes", "; ".join(c.componentes)))
     filas += [("Agregación", AGREGACIONES[c.agregacion]),
@@ -62,13 +65,15 @@ def descripcion_contrato(c):
     if c.mecanismo == "banda":
         filas += [("Ref. superior €/MWh", c.ref_superior),
                   ("Ref. inferior €/MWh", c.ref_inferior)]
-    if c.mecanismo in ("techo", "suelo_techo"):
-        filas.append(("Techo €/MWh", c.techo))
-    if c.mecanismo == "suelo_techo":
-        filas.append(("Suelo €/MWh", c.suelo))
+    if c.mecanismo == "techo":
+        filas.append(("Referencia de SSAA (techo) €/MWh", c.techo))
+    if c.mecanismo in ("indexado_techo", "indexado_suelo_techo"):
+        filas.append(("Precio máximo €/MWh", c.techo))
+    if c.mecanismo == "indexado_suelo_techo":
+        filas.append(("Precio mínimo €/MWh", c.suelo))
     if c.mecanismo == "fijo":
         filas.append(("Precio fijo €/MWh", c.precio_fijo))
-    if c.mecanismo in ("indexado", "techo", "suelo_techo") and c.prima:
+    if c.mecanismo in ("indexado", "indexado_techo", "indexado_suelo_techo") and c.prima:
         filas.append(("Prima €/MWh", c.prima))
     filas.append(("Pérdidas", PERDIDAS[c.perdidas]))
     if c.perdidas == "fijo":

@@ -39,10 +39,20 @@ class Mecanismos(unittest.TestCase):
         self.assertEqual(motor.aplicar_mecanismo(c, 15.0), 0.0)
         self.assertAlmostEqual(motor.aplicar_mecanismo(c, 12.0), -(14.0 - 12))
 
-    def test_techo_y_suelo(self):
-        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="techo"), 30), 20)
-        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="techo"), 15), 15)
-        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="suelo_techo"), 5), 10)
+    def test_techo_solo_cargo(self):
+        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="techo"), 30), 10)
+        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="techo"), 15), 0)
+
+    def test_indexado_con_limites(self):
+        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="indexado_techo"), 30), 20)
+        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="indexado_techo"), 15), 15)
+        self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="indexado_suelo_techo"), 5), 10)
+
+    def test_plantillas_validas(self):
+        for nombre, valores in motor.PLANTILLAS.items():
+            c = motor.Contrato.desde_dict(dict(valores, plantilla=nombre))
+            self.assertIn(c.mecanismo, motor.REGULARIZACIONES)
+            self.assertIn(nombre, motor.TEXTO_PLANTILLAS)
         self.assertEqual(motor.aplicar_mecanismo(self.c(mecanismo="indexado", prima=1), 5), 6)
 
 

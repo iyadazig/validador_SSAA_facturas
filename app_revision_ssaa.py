@@ -210,12 +210,37 @@ if cups and ss.get("contrato_cups") != cups:
         # ficha nueva: tarifa de la factura
         ss.c_tarifa = ss.get("f_tarifa", "6.1TD")
 if cups and cups not in guardados:
-    st.info("No hay ficha guardada para este CUPS: rellénala y pulsa «Guardar ficha».")
+    st.info("No hay ficha guardada para este CUPS: elige la cláusula tipo, rellena las "
+            "referencias y pulsa «Guardar ficha».")
+
+NOMBRES_PLANTILLA = ["(personalizada)"] + list(motor.PLANTILLAS)
+
+
+def aplicar_plantilla():
+    nombre = ss.sel_plantilla
+    if nombre in motor.PLANTILLAS:
+        fijar("c_", motor.PLANTILLAS[nombre])
+        ss.c_plantilla = nombre
+    else:
+        ss.c_plantilla = ""
+
+
+ss.setdefault("sel_plantilla", ss.get("c_plantilla") or "(personalizada)")
+if ss.get("contrato_cargado") != (cups, ss.get("c_plantilla")):
+    # al cargar una ficha, el selector refleja su clausula tipo
+    ss.contrato_cargado = (cups, ss.get("c_plantilla"))
+    ss.sel_plantilla = ss.get("c_plantilla") or "(personalizada)"
+st.selectbox("Cláusula tipo", NOMBRES_PLANTILLA, key="sel_plantilla", on_change=aplicar_plantilla,
+             help="Rellena cómo se calcula (índice, pérdidas, 1,015…). Las referencias de "
+                  "cada CUPS se introducen abajo.")
+if ss.get("c_plantilla") in motor.TEXTO_PLANTILLAS:
+    st.caption(motor.TEXTO_PLANTILLAS[ss.c_plantilla])
 
 k1, k2, k3 = st.columns(3)
 with k1:
+    st.text_input("Comercializadora del contrato", key="c_comercializadora")
     st.text_input("Descripción del contrato", key="c_descripcion")
-    opciones(motor.MECANISMOS, ("c_mecanismo", "Mecanismo"))
+    opciones(motor.MECANISMOS, ("c_mecanismo", "Tipo de cobertura de SSAA"))
     opciones(motor.INDICES, ("c_indice", "Índice ESIOS"))
     if ss.c_indice == "componentes":
         try:
@@ -228,16 +253,18 @@ with k1:
     opciones(motor.AGREGACIONES, ("c_agregacion", "Cómo se agrega el índice"))
 with k2:
     mec = ss.c_mecanismo
+    if mec == "techo":
+        st.number_input("Referencia de SSAA (techo) €/MWh", format="%.3f", key="c_techo")
     if mec == "banda":
         st.number_input("Referencia superior €/MWh", format="%.3f", key="c_ref_superior")
         st.number_input("Referencia inferior €/MWh", format="%.3f", key="c_ref_inferior")
-    if mec in ("techo", "suelo_techo"):
-        st.number_input("Techo €/MWh", format="%.3f", key="c_techo")
-    if mec == "suelo_techo":
-        st.number_input("Suelo €/MWh", format="%.3f", key="c_suelo")
+    if mec in ("indexado_techo", "indexado_suelo_techo"):
+        st.number_input("Precio máximo €/MWh", format="%.3f", key="c_techo")
+    if mec == "indexado_suelo_techo":
+        st.number_input("Precio mínimo €/MWh", format="%.3f", key="c_suelo")
     if mec == "fijo":
         st.number_input("Precio fijo €/MWh", format="%.3f", key="c_precio_fijo")
-    if mec in ("indexado", "techo", "suelo_techo"):
+    if mec in ("indexado", "indexado_techo", "indexado_suelo_techo"):
         st.number_input("Prima / fee €/MWh", format="%.3f", key="c_prima")
     st.number_input("Factor final (1,015 = impuesto municipal)", format="%.4f",
                     step=0.001, key="c_factor")
@@ -257,14 +284,46 @@ def contrato_actual():
     return motor.Contrato.desde_dict(d)
 
 
+def errores_ficha(c):
+    if c.mecanismo == "techo" and not c.techo:
+        return "Falta la Referencia de SSAA (techo)."
+    if c.mecanismo == "banda":
+        if not (c.ref_superior and c.ref_inferior):
+            return "Faltan las referencias superior e inferior de la banda."
+        if c.ref_inferior > c.ref_superior:
+            return "La referencia inferior es mayor que la superior."
+    return None
+
+
 if st.button("Guardar ficha de contrato", disabled=not cups):
-    informe.guardar_contrato(contrato_actual())
-    st.success("Ficha guardada para %s en %s" % (cups, config.FICHERO_CONTRATOS.name))
+    ficha = contrato_actual()
+    error = errores_ficha(ficha)
+    if error:
+        st.error(error)
+    else:
+        informe.guardar_contrato(ficha)
+        st.success("Ficha guardada para %s: %s." % (cups, motor.MECANISMOS[ficha.mecanismo]))
 
 if ss.c_mecanismo == "banda":
     st.caption("Banda: cargo = consumo × (SSAA − ref. sup.) × (1+perd) × factor si supera la "
                "referencia superior; abono = consumo × (ref. inf. − SSAA) × (1+perd) × factor "
                "si queda por debajo. El abono se calcula con signo negativo.")
+elif ss.c_mecanismo == "techo":
+    st.caption("Techo: cargo = consumo × (SSAA − referencia) × (1+perd) × factor solo si los "
+               "SSAA superan la referencia; por debajo no hay ajuste ni abono.")
+
+guardados = informe.cargar_contratos()
+if guardados:
+    with st.expander("Fichas de contrato guardadas (%d)" % len(guardados)):
+        st.dataframe(pd.DataFrame([{
+            "CUPS": c.cups, "Comercializadora": c.comercializadora,
+            "Descripción": c.descripcion, "Tarifa": c.tarifa,
+            "Cobertura": motor.MECANISMOS.get(c.mecanismo, c.mecanismo),
+            "Techo €/MWh": c.techo if c.mecanismo == "techo" else None,
+            "Ref. superior €/MWh": c.ref_superior if c.mecanismo == "banda" else None,
+            "Ref. inferior €/MWh": c.ref_inferior if c.mecanismo == "banda" else None,
+            "Pérdidas": motor.PERDIDAS.get(c.perdidas), "Factor": c.factor}
+            for c in guardados.values()]), hide_index=True, use_container_width=True)
 
 # ======================================================================= curva
 st.header("3. Curva de consumo")

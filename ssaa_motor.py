@@ -12,11 +12,13 @@ Clausula (Contrato):
                fijo       precio fijo de contrato
   agregacion   media_aritmetica | media_ponderada (por consumo) | horaria
                (horaria = se aplica hora a hora, o cuarto a cuarto con curva QH)
-  mecanismo    indexado     precio = indice + prima
-               techo        precio = min(indice, techo) + prima
-               suelo_techo  precio = max(suelo, min(indice, techo)) + prima
+  mecanismo    techo        regularizacion: cargo +(indice - techo) si lo supera,
+                            0 si no (cobertura hasta una Referencia de SSAA; sin abono)
                banda        regularizacion: +(indice - ref_superior) si lo supera,
                             -(ref_inferior - indice) si queda por debajo, 0 dentro
+               indexado     precio = indice + prima
+               indexado_techo       precio = min(indice, techo) + prima
+               indexado_suelo_techo precio = max(suelo, min(indice, techo)) + prima
                fijo         precio = precio_fijo
   perdidas     ninguna | liquicomun_h | liquicomun_qh | pvpc | fijo
   perd_agregacion  como se agrega PERD cuando la agregacion no es horaria
@@ -39,11 +41,14 @@ INDICES = {"sah_pvpc": "Total SAH PVPC (horario, bc)",
 AGREGACIONES = {"media_aritmetica": "Media aritmética del periodo",
                 "media_ponderada": "Media ponderada por consumo",
                 "horaria": "Hora a hora (indexado puro)"}
-MECANISMOS = {"indexado": "Indexado (índice + prima)",
-              "techo": "Con techo",
-              "suelo_techo": "Con suelo y techo",
-              "banda": "Banda con regularización",
+MECANISMOS = {"techo": "Techo: cargo si los SSAA superan la referencia",
+              "banda": "Banda: cargo por encima y abono por debajo",
+              "indexado": "Indexado (índice + prima)",
+              "indexado_techo": "Indexado con precio máximo",
+              "indexado_suelo_techo": "Indexado con precio mínimo y máximo",
               "fijo": "Precio fijo"}
+# mecanismos que son una regularizacion sobre un precio de SSAA ya incluido
+REGULARIZACIONES = ("techo", "banda")
 PERDIDAS = {"ninguna": "Sin pérdidas",
             "liquicomun_h": "PERD tarifa liquicomún (horario)",
             "liquicomun_qh": "PERD tarifa liquicomún (cuartohorario)",
@@ -53,17 +58,42 @@ PERD_AGREGACIONES = {"media_aritmetica": "Media aritmética",
                      "media_ponderada": "Media ponderada por consumo"}
 TARIFAS = ["2.0TD", "3.0TD", "3.0TDVE", "6.1TD", "6.1TDVE", "6.2TD", "6.3TD", "6.4TD"]
 
+# Clausulas tipo: fijan como se calcula; las referencias de cada CUPS se rellenan aparte.
+PLANTILLAS = {
+    "Endesa grandes cuentas — techo": dict(
+        comercializadora="Endesa", mecanismo="techo", indice="sah_pvpc",
+        agregacion="media_aritmetica", perdidas="liquicomun_h",
+        perd_agregacion="media_aritmetica", factor=1.015, prima=0.0),
+    "Endesa grandes cuentas — banda": dict(
+        comercializadora="Endesa", mecanismo="banda", indice="sah_pvpc",
+        agregacion="media_aritmetica", perdidas="liquicomun_h",
+        perd_agregacion="media_aritmetica", factor=1.015, prima=0.0),
+}
+TEXTO_PLANTILLAS = {
+    "Endesa grandes cuentas — techo":
+        "Cobertura hasta la Referencia de SSAA. Si la media aritmética del Total SAH "
+        "(PVPC_DETALLE_DD) del periodo la supera: cargo = consumo MWh × (SSAA reales − "
+        "referencia) × (1 + perd) × 1,015. Si no, no hay ajuste.",
+    "Endesa grandes cuentas — banda":
+        "Banda entre referencia inferior y superior. Si SSAA reales > ref. superior: cargo = "
+        "consumo × (SSAA reales − ref. sup.) × (1 + perd) × 1,015; si < ref. inferior: abono = "
+        "consumo × (ref. inf. − SSAA reales) × (1 + perd) × 1,015. Perd = media aritmética de "
+        "las pérdidas horarias.",
+}
+
 
 @dataclass
 class Contrato:
     cups: str = ""
     descripcion: str = ""
+    comercializadora: str = ""
+    plantilla: str = ""
     tarifa: str = "6.1TD"
     zona: str = "Península"
     indice: str = "sah_pvpc"
     componentes: list = field(default_factory=list)
     agregacion: str = "media_aritmetica"
-    mecanismo: str = "banda"
+    mecanismo: str = "techo"
     precio_fijo: float = 0.0
     prima: float = 0.0
     ref_superior: float = 0.0
@@ -125,11 +155,13 @@ class ErrorRevision(Exception):
 # --------------------------------------------------------------------- mecanismo
 def aplicar_mecanismo(c, indice):
     m = c.mecanismo
+    if m == "techo":
+        return max(indice - c.techo, 0.0)
     if m == "indexado":
         return indice + c.prima
-    if m == "techo":
+    if m == "indexado_techo":
         return min(indice, c.techo) + c.prima
-    if m == "suelo_techo":
+    if m == "indexado_suelo_techo":
         return max(c.suelo, min(indice, c.techo)) + c.prima
     if m == "banda":
         if indice > c.ref_superior:

@@ -61,11 +61,19 @@ Las pruebas que van a git usan textos sintéticos con la maqueta y cifras invent
 
 ## Mecanismos soportados
 
-Indexado (+prima), techo, suelo y techo, banda con regularización (cargo/abono; el
-análisis de origen está en `..\Descarga_datos_ESIOS\ANALISIS_regularizacion_SSAA.md`,
-fuera del repositorio), precio fijo.
+Regularizaciones sobre un SSAA ya incluido en el precio (las de Endesa grandes cuentas):
+- **techo**: cobertura hasta una Referencia de SSAA; cargo = MWh × (SSAA reales − ref.)
+  × (1+perd) × 1,015 solo si se supera. Sin abono.
+- **banda**: cargo por encima de la ref. superior y abono por debajo de la inferior.
+
+Además: indexado (+prima), indexado con precio máximo, con mínimo y máximo, y fijo.
 Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si curva e
 índice son QH). `importe = MWh × precio × (1+perd/100) × factor`.
+
+Cláusulas tipo en `ssaa_motor.PLANTILLAS` («Endesa grandes cuentas — techo / banda»):
+Total SAH del PVPC_DETALLE_DD, media aritmética, PERD de la tarifa del liquicomún (media
+aritmética) y 1,015. La ficha de cada CUPS guarda el tipo (techo o banda) y sus
+referencias. Comprobado con una factura real de Endesa 6.2TD: cuadra al céntimo.
 
 ## Pendiente
 

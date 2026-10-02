@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
+import ssaa_motor as motor
 from lectores_factura import leer_factura, leer_texto
 
 ENDESA = """
@@ -111,6 +112,12 @@ class FacturasReales(unittest.TestCase):
                           for l in f.lineas_ssaa]
                 self.assertEqual(lineas, e["lineas"])
                 self.assertEqual(f.avisos, [])
+                if "contrato" in e:
+                    # revision completa con la clausula real (guardada solo en local)
+                    c = motor.Contrato.desde_dict(e["contrato"])
+                    veredictos = [motor.revisar(c, l.inicio, l.fin, l.kwh, l.importe).veredicto
+                                  for l in f.lineas_ssaa]
+                    self.assertEqual(veredictos, e["veredictos"])
 
 
 if __name__ == "__main__":
