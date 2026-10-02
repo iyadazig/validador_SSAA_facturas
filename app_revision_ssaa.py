@@ -553,6 +553,14 @@ if ss.get("resultados"):
         m[1].metric("Total recalculado", "%.2f €" % tot_r)
         m[2].metric("Diferencia (facturado − recalculado)", "%+.2f €" % (tot_f - tot_r))
         st.dataframe(pd.DataFrame(resumen), hide_index=True, use_container_width=True)
+        if len(validos) > 1:
+            st.markdown("**Evolución de los SSAA en todo el periodo revisado**")
+            st.caption("Serie horaria de todas las líneas seguidas. Los tramos negros son los SSAA "
+                       "reales de cada línea (la media que entra en su cálculo); las discontinuas, "
+                       "las referencias del contrato. El detalle de cada línea, con su gráfica y "
+                       "su cálculo paso a paso, está en los desplegables de abajo.")
+            st.altair_chart(graficos.grafico_conjunto([r for _l, r, _d in validos]),
+                            use_container_width=True)
         filas_tot = totales(validos, validos[0][1].contrato)
         if filas_tot:
             st.markdown("**Totales**")

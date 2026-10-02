@@ -126,6 +126,73 @@ def grafico_ssaa(r, alto=320):
         font="Arial").configure_view(stroke=None)
 
 
+def grafico_conjunto(resultados, alto=340):
+    """Todas las lineas de la factura en una grafica: serie horaria seguida, los SSAA
+    reales de cada linea como un tramo sobre su periodo y las referencias del contrato."""
+    r0 = resultados[0]
+    c = r0.contrato
+    unidad = "cuartohorario" if any(r.resolucion == "qh" for r in resultados) else "horario"
+    nombre = "%s %s (€/MWh)" % (NOMBRE_SERIE.get(c.indice, "SSAA"), unidad)
+    def periodo(r):
+        if r.inicio.day == 1 and (r.fin + dt.timedelta(days=1)).day == 1 and                 r.inicio.month == r.fin.month:
+            return MESES[r.inicio.month - 1]
+        return "%s–%s" % (r.inicio.strftime("%d/%m"), r.fin.strftime("%d/%m"))
+    nombre_media = "SSAA reales de cada periodo: " + " · ".join(
+        "%s %s" % (periodo(r), _num(lineas_referencia(r)[0][1])) for r in resultados) + " €/MWh"
+    serie = pd.DataFrame([{"Momento": _momento(k), "Valor": v, "Serie": nombre,
+                           "Fecha y hora": _etiqueta_hora(k), "Texto": "%s €/MWh" % _num(v)}
+                          for r in resultados for k, _e, v, _p, _pr, _i in r.detalle])
+    tramos = pd.DataFrame([{"Inicio": dt.datetime.combine(r.inicio, dt.time()),
+                            "Fin": dt.datetime.combine(r.fin, dt.time()) + dt.timedelta(days=1),
+                            "Valor": lineas_referencia(r)[0][1], "Serie": nombre_media,
+                            "Periodo": "%s – %s" % (r.inicio.strftime("%d/%m/%Y"),
+                                                    r.fin.strftime("%d/%m/%Y")),
+                            "Texto": "%s €/MWh" % _num(lineas_referencia(r)[0][1])}
+                           for r in resultados])
+    refs = lineas_referencia(r0)[1:]
+    lineas = pd.DataFrame([{"Valor": v, "Serie": n, "Texto": "%s €/MWh" % _num(v, 3)}
+                           for n, v, _t in refs])
+
+    estilos = {"ref_sup": (estilo.GRIS, [7, 4]), "ref_inf": (estilo.GRIS_CLARO, [3, 3])}
+    dominio = [nombre, nombre_media] + [n for n, _v, _t in refs]
+    colores = [estilo.GRANATE, estilo.NEGRO] + [estilos[t][0] for _n, _v, t in refs]
+    trazos = [[1, 0], [1, 0]] + [estilos[t][1] for _n, _v, t in refs]
+    leyenda = alt.Legend(title=None, orient="bottom", direction="vertical", labelLimit=440,
+                         labelColor=estilo.NEGRO, labelFontSize=12, symbolType="stroke",
+                         symbolSize=500, symbolStrokeWidth=2.4)
+    color = alt.Color("Serie:N", scale=alt.Scale(domain=dominio, range=colores), legend=leyenda)
+    trazo = alt.StrokeDash("Serie:N", scale=alt.Scale(domain=dominio, range=trazos),
+                           legend=leyenda)
+    valores = list(serie["Valor"]) + list(tramos["Valor"]) + list(lineas.get("Valor", []))
+    margen = (max(valores) - min(valores)) * 0.05 or 1
+    eje_y = alt.Y("Valor:Q", title="€/MWh",
+                  scale=alt.Scale(domain=[min(valores) - margen, max(valores) + margen]),
+                  axis=alt.Axis(labelColor=estilo.GRIS, gridColor="#EFE9E4",
+                                titleColor=estilo.GRIS, format=".0f"))
+
+    curva = alt.Chart(serie).mark_line(strokeWidth=1.1, opacity=0.85).encode(
+        x=alt.X("Momento:T", axis=EJE_FECHA), y=eje_y, color=color, strokeDash=trazo)
+    medias = alt.Chart(tramos).mark_rule(strokeWidth=3).encode(
+        x="Inicio:T", x2="Fin:T", y="Valor:Q", color=color, strokeDash=trazo,
+        tooltip=[alt.Tooltip("Periodo:N"), alt.Tooltip("Texto:N", title="SSAA reales")])
+    capas = [curva, medias]
+    if len(lineas):
+        capas.append(alt.Chart(lineas).mark_rule(strokeWidth=2).encode(
+            y="Valor:Q", color=color, strokeDash=trazo,
+            tooltip=[alt.Tooltip("Serie:N", title="Línea"), alt.Tooltip("Texto:N", title="Valor")]))
+    cerca = alt.selection_point(nearest=True, on="pointerover", fields=["Momento"], empty=False,
+                                clear="pointerout")
+    etiqueta = [alt.Tooltip("Fecha y hora:N"), alt.Tooltip("Texto:N", title="SSAA")]
+    capas += [alt.Chart(serie).mark_rule(opacity=0, strokeWidth=8).encode(
+                  x="Momento:T", tooltip=etiqueta).add_params(cerca),
+              alt.Chart(serie).mark_rule(color=estilo.GRIS_CLARO, strokeWidth=1).encode(
+                  x="Momento:T").transform_filter(cerca),
+              alt.Chart(serie).mark_point(filled=True, size=70, color=estilo.GRANATE).encode(
+                  x="Momento:T", y="Valor:Q", tooltip=etiqueta).transform_filter(cerca)]
+    return alt.layer(*capas).properties(height=alto, usermeta=OPCIONES_MENU).configure(
+        font="Arial").configure_view(stroke=None)
+
+
 def grafico_consumo(r, alto=170):
     if not any(e for _k, e, *_ in r.detalle):
         return None
