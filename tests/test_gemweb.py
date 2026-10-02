@@ -28,7 +28,7 @@ class ApiFalsa(gemweb.ClienteGemweb):
             if p["search_values"] != "ES0000000000000000XX":
                 raise gemweb.GemwebError("No se han encontrado resultados")
             return ET.fromstring("<root><subministrament><id>42</id><cups>ES0000000000000000XX"
-                                 "</cups><tarifa>6.1TD</tarifa></subministrament></root>")
+                                 "</cups><tarifa_acces>6.1TD</tarifa_acces></subministrament></root>")
         a = dt.datetime.fromisoformat(p["date_from"])
         b = dt.datetime.fromisoformat(p["date_to"]) + dt.timedelta(days=1)
         t, valores = a + dt.timedelta(minutes=15), []
@@ -45,7 +45,7 @@ class Gemweb(unittest.TestCase):
     def test_dia_normal(self):
         d = dt.date(2026, 4, 1)
         c, sum_ = ApiFalsa().curva("ES0000000000000000XX", d, d)
-        self.assertEqual(sum_["tarifa"], "6.1TD")
+        self.assertEqual(sum_["tarifa_acces"], "6.1TD")
         self.assertEqual(c.resolucion, "qh")
         self.assertEqual(len(c.valores), 96)
         self.assertEqual(c.valores[(d, 1, 1)], 1.0)
@@ -73,6 +73,16 @@ class Gemweb(unittest.TestCase):
         c, _ = api.curva("ES0000000000000000XX", dt.date(2026, 4, 1), dt.date(2026, 6, 30))
         self.assertGreater(len([p for p in api.peticiones if p[0] == "get_metering"]), 2)
         self.assertEqual(len(c.valores), 91 * 96)
+
+    def test_suministro_sin_curva(self):
+        class SinDatos(ApiFalsa):
+            def _post(self, peticion, timeout=None, **p):
+                if peticion == "get_metering":
+                    raise gemweb.GemwebError("No se han encontrado datos para hacer el gráfico")
+                return super()._post(peticion, timeout, **p)
+        with self.assertRaises(gemweb.GemwebError) as e:
+            SinDatos().curva("ES0000000000000000XX", MARZO, MARZO)
+        self.assertIn("sin telemedida", str(e.exception))
 
     def test_cups_desconocido(self):
         with self.assertRaises(gemweb.GemwebError):

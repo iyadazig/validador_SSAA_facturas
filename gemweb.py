@@ -245,6 +245,13 @@ class ClienteGemweb:
         # la API etiqueta con el fin del cuarto: se pide hasta el dia siguiente
         valores, fallidos = self.descargar(sum_["id"], desde, hasta + dt.timedelta(days=1),
                                            al_avanzar)
+        if not valores:
+            motivo = fallidos[0].split(": ", 1)[-1] if fallidos else "respuesta vacía"
+            raise GemwebError("Gemweb no tiene curva de %s entre el %s y el %s (%s). El "
+                              "suministro existe en el inventario, pero sin telemedida "
+                              "cargada; sube la curva como fichero."
+                              % (cups, desde.strftime("%d/%m/%Y"), hasta.strftime("%d/%m/%Y"),
+                                 motivo))
         c = curva_desde_gemweb(valores, desde, hasta)
         c.avisos = ["Tramo sin descargar: " + f for f in fallidos] + c.avisos
         return c, sum_

@@ -412,7 +412,8 @@ elif origen == "Gemweb (API)":
         _clave, curva, sum_g = ss.curva_gemweb
         st.write("Suministro en Gemweb: tarifa **%s**, alta %s. Curva **cuartohoraria**, "
                  "%d cuartos, %s a %s, total **%.1f kWh**."
-                 % (sum_g.get("tarifa") or "—", sum_g.get("data_alta") or "—",
+                 % (sum_g.get("tarifa_acces") or sum_g.get("tarifa") or "—",
+                    sum_g.get("data_alta") or "—",
                     len(curva.valores), curva.inicio, curva.fin, curva.total_kwh))
         for a in curva.avisos[:10]:
             st.warning(a)
