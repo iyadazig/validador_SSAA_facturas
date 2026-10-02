@@ -35,6 +35,7 @@ importe = energia MWh x precio x (1 + perd/100) x Ap x factor
 
 import datetime as dt
 import itertools
+import re
 from dataclasses import dataclass, field, asdict
 
 import config
@@ -82,14 +83,20 @@ def perd_estandar(tarifa):
 
 # Clausulas tipo: fijan como se calcula; las referencias de cada CUPS se rellenan aparte.
 PLANTILLAS = {
-    "Endesa grandes cuentas — techo": dict(
+    "Endesa grandes cuentas — techo (PVPC)": dict(
         comercializadora="Endesa", mecanismo="techo", indice="sah_pvpc",
         agregacion="media_aritmetica", perdidas="liquicomun_h",
         perd_agregacion="media_aritmetica", factor=1.015, prima=0.0),
-    "Endesa grandes cuentas — banda": dict(
+    "Endesa grandes cuentas — banda (PVPC)": dict(
         comercializadora="Endesa", mecanismo="banda", indice="sah_pvpc",
         agregacion="media_aritmetica", perdidas="liquicomun_h",
         perd_agregacion="media_aritmetica", factor=1.015, prima=0.0),
+    "Endesa grandes cuentas — banda (componentes OS, C2)": dict(
+        comercializadora="Endesa", mecanismo="banda", indice="componentes",
+        componentes=list(esios.COLS_ENDESA_OS), agregacion="media_aritmetica",
+        perdidas="liquicomun_h", perd_agregacion="media_aritmetica", factor=1.015,
+        liquidacion_requerida="C2", periodo_calculo="mensual", regularizacion="linea",
+        prima=0.0),
     "Naturgy — regularización trimestral (banda)": dict(
         comercializadora="Naturgy", mecanismo="banda", indice="pfm_ssaa",
         agregacion="media_aritmetica", perdidas="fijo", factor=1.015, apuntamiento=1.02,
@@ -97,18 +104,28 @@ PLANTILLAS = {
         componentes_pfm=list(esios.COLS_PFM_NATURGY), componentes_pfm_contrato=False,
         prima=0.0),
 }
+# nombres anteriores de las plantillas (fichas guardadas antes de renombrarlas)
+ALIAS_PLANTILLAS = {"Endesa grandes cuentas — techo": "Endesa grandes cuentas — techo (PVPC)",
+                    "Endesa grandes cuentas — banda": "Endesa grandes cuentas — banda (PVPC)"}
 # en estas plantillas el % de perdidas fijo depende de la tension de la tarifa
 PLANTILLAS_PERD_POR_TENSION = ("Naturgy — regularización trimestral (banda)",)
 TEXTO_PLANTILLAS = {
-    "Endesa grandes cuentas — techo":
+    "Endesa grandes cuentas — techo (PVPC)":
         "Cobertura hasta la Referencia de SSAA. Si la media aritmética del Total SAH "
         "(PVPC_DETALLE_DD) del periodo la supera: cargo = consumo MWh × (SSAA reales − "
         "referencia) × (1 + perd) × 1,015. Si no, no hay ajuste.",
-    "Endesa grandes cuentas — banda":
+    "Endesa grandes cuentas — banda (PVPC)":
         "Banda entre referencia inferior y superior. Si SSAA reales > ref. superior: cargo = "
         "consumo × (SSAA reales − ref. sup.) × (1 + perd) × 1,015; si < ref. inferior: abono = "
         "consumo × (ref. inf. − SSAA reales) × (1 + perd) × 1,015. Perd = media aritmética de "
         "las pérdidas horarias.",
+    "Endesa grandes cuentas — banda (componentes OS, C2)":
+        "No usa el PVPC. SSAA reales = media aritmética de los SSAA horarios del mes publicados "
+        "por el Operador del Sistema en la liquidación C2, sumando Restricciones PBF [806], "
+        "Restricciones tiempo real [807], Banda secundaria [811], Incumplimiento energía de "
+        "balance [1368] y Control factor de potencia [1286]. Liquidación = Dif SSAA × (1 + perd) × "
+        "1,015 × consumo del mes; perd = media aritmética de las pérdidas horarias. Si al emitir "
+        "la factura no había C2, Endesa usa la última publicación y regulariza en la siguiente.",
     "Naturgy — regularización trimestral (banda)":
         "Regularización trimestral = Σ meses n del trimestre [Diferencia SSAA n × (1 + pérdidas) × "
         "Ap × Consumo n × HL]. SSAA reales = media aritmética de los SSAA horarios del "
@@ -157,6 +174,8 @@ class Contrato:
             if campos[k].type is float and v is not None:
                 v = float(v)
             out[k] = v
+        if out.get("plantilla") in ALIAS_PLANTILLAS:
+            out["plantilla"] = ALIAS_PLANTILLAS[out["plantilla"]]
         return cls(**out)
 
     def a_dict(self):
@@ -231,7 +250,7 @@ def _indice(c, ini, fin, resolucion):
         cols = [esios.COL_TOTAL_SSAA] if c.indice == "ssaa_esios" else c.componentes
         if not cols:
             raise ErrorRevision("No se han elegido componentes para el índice")
-        serie, liq = esios.componentes_qh(ini, fin, cols)
+        serie, liq = esios.componentes_qh(ini, fin, cols, c.liquidacion_requerida)
         return (serie if resolucion == "qh" else esios.a_horario(serie)), liq
     if c.indice == "fijo":
         # sin indice: la rejilla horaria la da el PVPC si existe, si no la curva
@@ -292,8 +311,10 @@ def _ponderada(pares):
 
 # ------------------------------------------------------------------------- motor
 def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
-            tolerancia_pct=config.TOLERANCIA_PCT):
-    """Recalcula el SSAA del periodo [inicio, fin] (ambos incluidos)."""
+            tolerancia_pct=config.TOLERANCIA_PCT, fecha_emision=None):
+    """Recalcula el SSAA del periodo [inicio, fin] (ambos incluidos).
+    Con fecha_emision se avisa si la factura es anterior a la liquidacion que fija
+    el contrato (la comercializadora tuvo que usar una publicacion anterior)."""
     c = contrato
     avisos = []
     if fin < inicio:
@@ -339,6 +360,19 @@ def revisar(contrato, inicio, fin, consumo_kwh=None, facturado=None, curva=None,
             avisos.append("%s: el contrato pide la liquidación %s y en el Excel está %s. "
                           "Puede haber diferencias con lo que calculó la comercializadora."
                           % (mes, c.liquidacion_requerida, liq))
+        elif c.liquidacion_requerida and fecha_emision and isinstance(liq, str):
+            pub = re.search(r"publ\. (\d{2}/\d{2}/\d{4})", liq)
+            if pub:
+                pub = dt.datetime.strptime(pub.group(1), "%d/%m/%Y").date()
+                if fecha_emision < pub:
+                    avisos.append(
+                        "La factura (%s) es anterior a la publicación de la %s de %s (%s): "
+                        "la comercializadora tuvo que calcular con una publicación anterior. "
+                        "La diferencia frente a la %s debe regularizarse en la siguiente "
+                        "factura." % (fecha_emision.strftime("%d/%m/%Y"),
+                                      c.liquidacion_requerida, mes.split()[-1],
+                                      pub.strftime("%d/%m/%Y"),
+                                      c.liquidacion_requerida))
 
     claves = sorted(indice)
     cv = _curva_en(curva, resolucion)
@@ -584,6 +618,9 @@ def formula_mecanismo(c, x="SSAA reales"):
 def formula_clausula(c):
     """Lineas de texto con las formulas de la clausula."""
     ind = NOMBRE_INDICE[c.indice]
+    if c.indice == "componentes":
+        ind = "suma de %s; valor horario = media de sus 4 cuartos" % " + ".join(
+            re.sub(r"^[A-Z0-9]+ | EUR/MWh$", "", x) for x in c.componentes)
     if c.indice == "pfm_ssaa":
         ind = "%s del PFMHORAS_COM, €/MWh (%s)" % (
             " + ".join(c.componentes_pfm),

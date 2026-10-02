@@ -345,6 +345,7 @@ if guardados:
     with st.expander("Fichas de contrato guardadas (%d)" % len(guardados)):
         st.dataframe(pd.DataFrame([{
             "CUPS": c.cups, "Comercializadora": c.comercializadora,
+            "Cláusula tipo": c.plantilla or "personalizada",
             "Descripción": c.descripcion, "Tarifa": c.tarifa,
             "Cobertura": motor.MECANISMOS.get(c.mecanismo, c.mecanismo),
             "Techo €/MWh": c.techo if c.mecanismo == "techo" else None,
@@ -500,7 +501,7 @@ if st.button("Revisar SSAA", type="primary", disabled=not lineas or bool(incompl
             kwh = l["kWh"]
             try:
                 r = motor.revisar(contrato, l["Inicio"], l["Fin"], kwh, l["Importe €"],
-                                  curva, tolerancia)
+                                  curva, tolerancia, ss.get("f_emision"))
                 diag = motor.diagnostico(contrato, l["Inicio"], l["Fin"], kwh,
                                          l["Importe €"], curva)
             except motor.ErrorRevision as e:

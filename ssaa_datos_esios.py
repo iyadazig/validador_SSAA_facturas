@@ -130,11 +130,30 @@ def columnas_componentes(anio=None):
     return [c for c in cab if c and (str(c).startswith(PREFIJOS_SSAA) or c == COL_TOTAL_SSAA)]
 
 
-def componentes_qh(ini, fin, columnas=(COL_TOTAL_SSAA,)):
-    """{(fecha, hora, cuarto): suma de las columnas pedidas} y {mes: liquidacion}."""
+# Componentes de SSAA que enumera el contrato de Endesa "componentes OS"
+COLS_ENDESA_OS = ("RT3 Restricciones PDBF [806] EUR/MWh",
+                  "RT6 Restricciones tiempo real [807] EUR/MWh",
+                  "BS3 Banda secundaria [811] EUR/MWh",
+                  "BALX Incumplimiento balance [1368] EUR/MWh",
+                  "CFP Control factor potencia [1286] EUR/MWh")
+
+
+def componentes_qh(ini, fin, columnas=(COL_TOTAL_SSAA,), liquidacion=""):
+    """{(fecha, hora, cuarto): suma de las columnas pedidas} y {pestana: liquidacion}.
+
+    Con liquidacion="C2" se lee la copia "Componentes C2 mmm-aa" que el script de
+    descarga guarda cuando el mes esta en C2 (la pestana "mmm-aa" se sobrescribe con
+    cada liquidacion nueva); si no existe, la pestana normal."""
     out, liquidaciones = {}, {}
     for m in meses_entre(ini, fin):
-        filas = _filas(_ruta_componentes(m.year), nombre_mes(m))
+        hojas = [nombre_mes(m)]
+        if liquidacion == "C2":
+            hojas.insert(0, "Componentes C2 " + nombre_mes(m))
+        filas, hoja = None, None
+        for hoja in hojas:
+            filas = _filas(_ruta_componentes(m.year), hoja)
+            if filas:
+                break
         if not filas:
             continue
         cab = filas[2]
@@ -147,7 +166,7 @@ def componentes_qh(ini, fin, columnas=(COL_TOTAL_SSAA,)):
             if all(v is None for v in vals):
                 continue
             out[(f, int(r[1]), int(r[2]))] = sum(float(v or 0) for v in vals)
-            liquidaciones[nombre_mes(m)] = r[-1]
+            liquidaciones[hoja] = r[-1]
     return out, liquidaciones
 
 

@@ -196,6 +196,41 @@ class PFMHorasReales(unittest.TestCase):
         self.assertEqual(motor.perd_estandar("3.0TD"), 17.0)
 
 
+@unittest.skipUnless((config.CARPETA_ESIOS / "2026_Historico_componentes_ESIOS.xlsx").exists(),
+                     "sin Excel de ESIOS")
+class EndesaComponentesOS(unittest.TestCase):
+    """Banda sobre los componentes del OS en C2 (datos publicos, referencias genericas)."""
+
+    def contrato(self, **kw):
+        n = "Endesa grandes cuentas — banda (componentes OS, C2)"
+        return motor.Contrato.desde_dict(dict(motor.PLANTILLAS[n], plantilla=n,
+                                              ref_superior=18.0, ref_inferior=15.0, **kw))
+
+    def test_formula_y_c2(self):
+        ini, fin = dt.date(2026, 7, 1), dt.date(2026, 7, 31)
+        r = motor.revisar(self.contrato(), ini, fin, 100000, None)
+        cols = list(esios.COLS_ENDESA_OS)
+        serie, _ = esios.componentes_qh(ini, fin, cols, "C2")
+        horas = esios.a_horario(serie)
+        media = sum(horas.values()) / len(horas)
+        self.assertAlmostEqual(r.indice_medio, media)
+        dif = media - 18 if media > 18 else (media - 15 if media < 15 else 0)
+        self.assertAlmostEqual(r.importe, 100 * dif * (1 + r.perd_aplicada / 100) * 1.015)
+        self.assertTrue(all(k.startswith("Componentes C2") or v.startswith("C2")
+                            for k, v in r.liquidaciones.items()))
+
+    def test_aviso_factura_anterior_a_la_c2(self):
+        r = motor.revisar(self.contrato(), dt.date(2026, 7, 1), dt.date(2026, 7, 31), 100000,
+                          None, fecha_emision=dt.date(2026, 8, 1))
+        if any(v.startswith("C2") for v in r.liquidaciones.values()):
+            self.assertTrue(any("anterior a la publicación de la C2" in a for a in r.avisos))
+
+    def test_nombres_antiguos_de_plantilla(self):
+        c = motor.Contrato.desde_dict({"plantilla": "Endesa grandes cuentas — banda"})
+        self.assertEqual(c.plantilla, "Endesa grandes cuentas — banda (PVPC)")
+        self.assertIn(c.plantilla, motor.PLANTILLAS)
+
+
 class MediasSAHReales(unittest.TestCase):
     """Medias del Total SAH publicadas (dato publico de ESIOS) con una banda 15-20."""
 

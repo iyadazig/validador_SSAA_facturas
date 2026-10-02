@@ -91,10 +91,18 @@ Además: indexado (+prima), indexado con precio máximo, con mínimo y máximo, 
 Agregación: media aritmética, media ponderada por consumo u hora a hora (QH si curva e
 índice son QH). `importe = MWh × precio × (1+perd/100) × factor`.
 
-Cláusulas tipo en `ssaa_motor.PLANTILLAS` («Endesa grandes cuentas — techo / banda»):
-Total SAH del PVPC_DETALLE_DD, media aritmética, PERD de la tarifa del liquicomún (media
-aritmética) y 1,015. La ficha de cada CUPS guarda el tipo (techo o banda) y sus
-referencias. Comprobado con una factura real de Endesa 6.2TD: cuadra al céntimo.
+Cláusulas tipo en `ssaa_motor.PLANTILLAS` (la ficha de cada CUPS guarda cuál es, el tipo
+techo/banda y sus referencias; nombres antiguos en `ALIAS_PLANTILLAS`):
+- «Endesa grandes cuentas — techo (PVPC)» y «— banda (PVPC)»: Total SAH del
+  PVPC_DETALLE_DD, media aritmética, PERD de la tarifa del liquicomún (media aritmética) y
+  1,015. Comprobado con una factura real de Endesa 6.2TD: cuadra al céntimo.
+- «Endesa grandes cuentas — banda (componentes OS, C2)»: NO usa el PVPC. SSAA reales =
+  media aritmética de RT3 [806] + RT6 [807] + BS3 [811] + BALX [1368] + CFP [1286] del
+  Excel de componentes en liquidación C2 (copia «Componentes C2 mmm-aa»), cálculo por mes,
+  mismas pérdidas y 1,015. Si la factura es anterior a la publicación de la C2, la app avisa
+  de que Endesa usó una publicación anterior y debe regularizar en la factura siguiente
+  (`revisar(..., fecha_emision=)`). Los meses que ya pasaron a C3+ antes de guardar la copia
+  (ene–jun 2026) solo tienen la última liquidación: se avisa.
 
 ## Pendiente
 
