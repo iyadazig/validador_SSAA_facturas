@@ -24,6 +24,7 @@ contratos_ssaa.json
 # credenciales (Gemweb, ESIOS): NUNCA en git
 .streamlit/secrets.toml
 *.toml
+!.streamlit/config.toml
 gemweb_token.txt
 esios_token.txt
 credenciales*

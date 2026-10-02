@@ -17,8 +17,11 @@ from ssaa_motor import (Contrato, INDICES, AGREGACIONES, MECANISMOS, PERDIDAS,
                         formula_clausula, pasos_calculo, conclusion_componentes,
                         tabla_componentes)
 
-NEGRITA = Font(bold=True)
-CABECERA = PatternFill("solid", fgColor="DDEBF7")
+# imagen corporativa GE&PE (mismos colores que la app, ver estilo.py)
+GRANATE = "970000"
+NEGRITA = Font(name="Arial", bold=True)
+CABECERA = PatternFill("solid", fgColor="F3D9D9")
+LOGO = config.CARPETA / "assets" / "logo_geype_peq.png"
 COLORES = {"CORRECTO": "C6EFCE", "FACTURADO DE MÁS": "FFC7CE", "FACTURADO DE MENOS": "FFEB9C"}
 
 
@@ -49,9 +52,26 @@ def _tabla(ws, fila, filas):
     return fila + len(filas) + 1
 
 
+def _cabecera_corporativa(ws, titulo):
+    """Logo de GE&PE y titulo en las primeras filas. Devuelve la fila siguiente."""
+    if LOGO.exists():
+        from openpyxl.drawing.image import Image as ImagenXL
+        img = ImagenXL(str(LOGO))
+        img.width, img.height = 170, 100
+        ws.add_image(img, "A1")
+        fila = 7
+    else:
+        fila = 1
+    c = ws.cell(fila, 1, titulo)
+    c.font = Font(name="Arial", bold=True, size=14, color=GRANATE)
+    ws.cell(fila + 1, 1, "GE&PE · Ingeniería y Gestión Energética").font = Font(
+        name="Arial", size=9, color="5A534C")
+    return fila + 3
+
+
 def _titulo(ws, fila, texto):
     c = ws.cell(fila, 1, texto)
-    c.font = Font(bold=True, size=12)
+    c.font = Font(name="Arial", bold=True, size=12, color=GRANATE)
     return fila + 1
 
 
@@ -308,7 +328,7 @@ def _hoja_calculo(wb, n, resumen, r):
         for a_ in r.avisos:
             ws.cell(fila, 1, a_)
             fila += 1
-    for col, ancho in zip("ABCDEFG", (34, 38, 52, 44, 20, 20, 9)):
+    for col, ancho in zip("ABCDEFG", (34, 38, 52, 44, 24, 24, 9)):
         ws.column_dimensions[col].width = ancho
 
 
@@ -338,7 +358,8 @@ def generar_excel(lineas, factura, totales=None, componentes=None):
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen"
-    fila = _titulo(ws, 1, "Revisión de SSAA — %s" % dt.date.today().strftime("%d/%m/%Y"))
+    fila = _cabecera_corporativa(ws, "Revisión de servicios de ajuste — %s"
+                                 % dt.date.today().strftime("%d/%m/%Y"))
     fila = _titulo(ws, fila + 1, "Factura")
     fila = _tabla(ws, fila, list(factura.items()))
     c0 = lineas[0][1].contrato
@@ -383,7 +404,8 @@ def generar_excel(lineas, factura, totales=None, componentes=None):
         wc = wb.create_sheet("Componentes PFMHORAS")
         c0 = lineas[0][1].contrato
         wc.cell(1, 1, "Comprobación de qué términos del PFMHORAS_COM reproducen lo facturado "
-                      "(todas las líneas)").font = Font(bold=True, size=12)
+                      "(todas las líneas)").font = Font(name="Arial", bold=True, size=12,
+                                                        color=GRANATE)
         concl = conclusion_componentes(componentes, c0)
         if concl:
             celda = wc.cell(2, 1, "Conclusión: " + concl[1])
@@ -408,6 +430,24 @@ def generar_excel(lineas, factura, totales=None, componentes=None):
         for n, diag in diags:
             for d in diag:
                 wg.append([n] + [d[k] for k in cab[1:]])
+
+    # tipografia corporativa y paginas ajustadas al ancho para imprimir
+    for estilo_xl in wb._named_styles:
+        if estilo_xl.name == "Normal":
+            estilo_xl.font = Font(name="Arial", size=10)
+    for hoja in wb.worksheets:
+        for fila_c in hoja.iter_rows():
+            for celda in fila_c:
+                if celda.font and celda.font.name != "Arial":
+                    f = celda.font
+                    celda.font = Font(name="Arial", bold=f.bold, size=f.size or 10,
+                                      color=f.color, italic=f.italic)
+        if not hoja.title.startswith("Detalle"):
+            hoja.page_setup.orientation = "landscape"
+            hoja.sheet_properties.pageSetUpPr.fitToPage = True
+            hoja.page_setup.fitToWidth = 1
+            hoja.page_setup.fitToHeight = 0
+        hoja.oddFooter.center.text = "GE&&PE · Ingeniería y Gestión Energética — &P / &N"
 
     buf = io.BytesIO()
     wb.save(buf)

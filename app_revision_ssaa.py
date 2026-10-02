@@ -17,13 +17,17 @@ import streamlit as st
 
 import config
 import curva_consumo
+import estilo
 import gemweb
 import informe
 import ssaa_datos_esios as esios
 import ssaa_motor as motor
 from lectores_factura import leer_factura
 
-st.set_page_config(page_title="Revisor SSAA", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Revisión de SSAA · GE&PE",
+                   page_icon=str(estilo.ICONO) if estilo.ICONO.exists() else None,
+                   layout="wide", menu_items={})
+estilo.aplicar()
 ss = st.session_state
 
 
@@ -61,8 +65,8 @@ with st.sidebar:
     with st.expander("Configurar credenciales"):
         st.caption("Se guardan cifradas en tu perfil de Windows (%APPDATA%\\ValidadorSSAA), "
                    "nunca en la carpeta del programa ni en GitHub.")
-        nuevo_id = st.text_input("client_id")
-        nuevo_secreto = st.text_input("client_secret", type="password")
+        nuevo_id = st.text_input("Identificador de cliente (client_id)")
+        nuevo_secreto = st.text_input("Clave secreta (client_secret)", type="password")
         g1, g2 = st.columns(2)
         if g1.button("Guardar", disabled=not (nuevo_id and nuevo_secreto)):
             try:
@@ -79,7 +83,8 @@ with st.sidebar:
             except gemweb.GemwebError as e:
                 st.error(str(e))
 
-st.title("Revisión de servicios de ajuste (SSAA) en facturas")
+estilo.cabecera("Revisión de servicios de ajuste en facturas",
+                "Comprobación del concepto de SSAA con los datos publicados por REE (ESIOS)")
 
 # valores iniciales de los campos (los widgets no llevan value= para no chocar
 # con los que se rellenan al leer el PDF o al cargar una ficha)
@@ -99,7 +104,7 @@ def tabla_lineas(lineas):
 
 
 # ===================================================================== factura
-st.header("1. Factura")
+estilo.seccion(1, "Factura", "PDF o datos introducidos a mano")
 pdf = st.file_uploader("Factura en PDF (opcional: también se puede rellenar a mano)",
                        type=["pdf"])
 if pdf is not None:
@@ -199,7 +204,7 @@ if lineas:
     st.caption("Total SSAA facturado en las líneas: **%.2f €**" % total)
 
 # ==================================================================== contrato
-st.header("2. Condiciones de SSAA del contrato")
+estilo.seccion(2, "Condiciones de SSAA del contrato", "Ficha guardada por CUPS")
 guardados = informe.cargar_contratos()
 if cups and ss.get("contrato_cups") != cups:
     ss.contrato_cups = cups
@@ -360,7 +365,7 @@ if guardados:
             for c in guardados.values()]), hide_index=True, use_container_width=True)
 
 # ======================================================================= curva
-st.header("3. Curva de consumo")
+estilo.seccion(3, "Curva de consumo", "Gemweb o fichero")
 necesita = ss.c_agregacion in ("media_ponderada", "horaria") or \
     (ss.c_perdidas not in ("ninguna", "fijo") and ss.get("c_perd_agregacion") == "media_ponderada")
 st.caption("Esta cláusula **necesita** la curva." if necesita else
@@ -420,7 +425,7 @@ elif origen == "Gemweb (API)":
             st.warning(a)
 
 # =================================================================== resultado
-st.header("4. Resultado")
+estilo.seccion(4, "Resultado")
 colores = {"CORRECTO": "green", "FACTURADO DE MÁS": "red", "FACTURADO DE MENOS": "orange"}
 incompletas = [l["Concepto"] for l in lineas if not (l["Inicio"] and l["Fin"])]
 if incompletas:
@@ -592,9 +597,9 @@ if ss.get("resultados"):
                       "Índice €/MWh": v, "Consumo kWh": e}
                      for k, e, v, _p, _pr, _i in r.detalle]
             df = pd.DataFrame(filas).set_index("Momento")
-            st.line_chart(df[["Índice €/MWh"]], height=220)
+            st.line_chart(df[["Índice €/MWh"]], height=220, color=estilo.GRANATE)
             if curva is not None:
-                st.bar_chart(df[["Consumo kWh"]], height=180)
+                st.bar_chart(df[["Consumo kWh"]], height=180, color=estilo.GRIS_CLARO)
             if diag:
                 st.markdown("**Diagnóstico**: variantes de cálculo más cercanas a lo facturado. "
                             "Si una distinta del contrato cuadra, probablemente es la que ha "
@@ -616,6 +621,8 @@ if ss.get("resultados"):
         nombre = "revision_SSAA_%s_%s.xlsx" % (cups or "sin_cups", ss.get("f_numero") or "")
         b1.download_button("Descargar informe Excel", xlsx, nombre,
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        if b2.button("Guardar en revisiones_ssaa"):
+        if b2.button("Guardar en la carpeta de revisiones"):
             ruta = informe.guardar_informe(xlsx, validos[0][1], cups, ss.get("f_numero"))
             st.success("Guardado en %s" % ruta)
+
+estilo.pie()

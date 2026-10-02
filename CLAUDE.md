@@ -7,6 +7,16 @@ de ESIOS y dice si lo facturado es correcto.
 **Coste cero**: todo corre en local. Nada de Streamlit Cloud, APIs de IA ni servicios de
 pago. La factura y la curva no salen del PC.
 
+## Imagen corporativa
+
+`estilo.py` (CSS, cabecera con logo, secciones numeradas, pie y traductor de los textos
+fijos de Streamlit al español) y `.streamlit/config.toml` (tema: granate del logo #970000,
+texto #1E1E1E, fondos beis, Arial; sin menú ni botón «Deploy»). Logo e icono en `assets/`
+(copiados de `estudio_potencia_cuartohorario/assets`). El informe Excel usa los mismos
+colores, Arial, el logo en «Resumen» y páginas ajustadas al ancho. Toda la interfaz en
+español: si se añade un widget con textos propios de Streamlit, añadirlos a
+`estilo.TRADUCCIONES` (solo se sustituyen textos que coinciden exactamente).
+
 ## Datos
 
 Lee, sin modificarlos, los Excel históricos del proyecto hermano
