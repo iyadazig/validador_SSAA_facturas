@@ -19,6 +19,7 @@ import config
 import curva_consumo
 import estilo
 import gemweb
+import graficos
 import informe
 import ssaa_datos_esios as esios
 import ssaa_motor as motor
@@ -592,14 +593,16 @@ if ss.get("resultados"):
                          else 0 if p["unidad"] in ("horas", "cuartos") else 6),
                 "Unidad": p["unidad"]} for p in motor.pasos_calculo(r)]),
                 hide_index=True, use_container_width=True)
-            filas = [{"Momento": dt.datetime.combine(k[0], dt.time()) + dt.timedelta(
-                          minutes=(k[1] - 1) * 60 + ((k[2] - 1) * 15 if len(k) == 3 else 0)),
-                      "Índice €/MWh": v, "Consumo kWh": e}
-                     for k, e, v, _p, _pr, _i in r.detalle]
-            df = pd.DataFrame(filas).set_index("Momento")
-            st.line_chart(df[["Índice €/MWh"]], height=220, color=estilo.GRANATE)
+            st.markdown("**Evolución de los SSAA en el periodo**")
+            st.caption("Cada punto es una %s. La línea negra son los SSAA reales que entran en "
+                       "la fórmula; las discontinuas, las referencias del contrato. Pasa el "
+                       "ratón por la gráfica para ver la fecha, la hora y el valor."
+                       % ("cuarto de hora" if r.resolucion == "qh" else "hora"))
+            st.altair_chart(graficos.grafico_ssaa(r), use_container_width=True)
             if curva is not None:
-                st.bar_chart(df[["Consumo kWh"]], height=180, color=estilo.GRIS_CLARO)
+                g_cons = graficos.grafico_consumo(r)
+                if g_cons is not None:
+                    st.altair_chart(g_cons, use_container_width=True)
             if diag:
                 st.markdown("**Diagnóstico**: variantes de cálculo más cercanas a lo facturado. "
                             "Si una distinta del contrato cuadra, probablemente es la que ha "
